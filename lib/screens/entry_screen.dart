@@ -1,12 +1,13 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 import '../theme/app_colors.dart';
 import '../models/session.dart';
-import '../services/api_service.dart';
 import '../services/auth_service.dart';
 import '../services/preferences_service.dart';
 import '../services/powersync_service.dart';
+import '../services/connectivity_service.dart';
 import '../widgets/sync_status_widget.dart';
 
 class EntryScreen extends StatefulWidget {
@@ -17,17 +18,24 @@ class EntryScreen extends StatefulWidget {
 }
 
 class _EntryScreenState extends State<EntryScreen> {
-  final _controller = TextEditingController();
-  bool _loading = false;
-  String? _error;
   String? _username;
   Session? _cachedSession;
+  List<Session> _subscriptions = [];
+  bool _isOnline = true;
+
+  StreamSubscription<List<Map<String, dynamic>>>? _sessionSubscription;
+  StreamSubscription<bool>? _connectivitySubscription;
 
   @override
   void initState() {
     super.initState();
     _loadUsername();
     _loadCachedSession();
+    _isOnline = ConnectivityService.isOnline;
+    _connectivitySubscription = ConnectivityService.stream.listen((online) {
+      if (mounted) setState(() => _isOnline = online);
+    });
+    _listenToSessions();
   }
 
   Future<void> _loadUsername() async {
@@ -40,34 +48,28 @@ class _EntryScreenState extends State<EntryScreen> {
     if (mounted) setState(() => _cachedSession = session);
   }
 
-  Future<void> _loadForm() async {
-    final id = _controller.text.trim();
-    if (id.isEmpty) {
-      setState(() => _error = 'Please enter a Session ID');
-      return;
-    }
-
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-
-    try {
-      final session = await ApiService.getSession(id);
-      await PreferencesService.cacheSession(session);
+  void _listenToSessions() {
+    final db = PowerSyncService.getPowerSync();
+    if (db == null) return;
+    _sessionSubscription = db
+        .watch('SELECT * FROM fieldlog_session ORDER BY name ASC')
+        .listen((rows) {
       if (!mounted) return;
-      Navigator.pushNamed(context, '/form', arguments: session);
-    } on ApiException catch (e) {
-      setState(() => _error = e.message);
-    } catch (e, stackTrace) {
-      await Sentry.captureException(e, stackTrace: stackTrace);
-      setState(() => _error = 'Network error. Check your connection and server URL.');
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
+      setState(() {
+        _subscriptions = rows.map((row) => Session.fromRow(row)).toList();
+      });
+    });
   }
 
   Future<void> _logout() async {
+    // Clear session rows before disconnecting so a different user on the same
+    // device does not see stale subscriptions.
+    final db = PowerSyncService.getPowerSync();
+    try {
+      await db?.execute('DELETE FROM fieldlog_session');
+    } catch (e, stackTrace) {
+      await Sentry.captureException(e, stackTrace: stackTrace);
+    }
     await PowerSyncService.disconnectPowerSync();
     await AuthService.logout();
     await PreferencesService.clearCachedSession();
@@ -77,7 +79,8 @@ class _EntryScreenState extends State<EntryScreen> {
 
   @override
   void dispose() {
-    _controller.dispose();
+    _sessionSubscription?.cancel();
+    _connectivitySubscription?.cancel();
     super.dispose();
   }
 
@@ -87,7 +90,7 @@ class _EntryScreenState extends State<EntryScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            // Top bar with username, settings, logout
+            // Top bar
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               child: Row(
@@ -105,6 +108,13 @@ class _EntryScreenState extends State<EntryScreen> {
                     ),
                   const Spacer(),
                   const SyncStatusWidget(),
+                  if (_isOnline)
+                    IconButton(
+                      icon: const Icon(Icons.explore_outlined,
+                          color: AppColors.accent),
+                      onPressed: () => Navigator.pushNamed(context, '/browse'),
+                      tooltip: 'Browse sessions',
+                    ),
                   IconButton(
                     icon: const Icon(Icons.logout_outlined,
                         color: AppColors.textTertiary),
@@ -114,123 +124,195 @@ class _EntryScreenState extends State<EntryScreen> {
                 ],
               ),
             ),
+
+            // Scrollable content
             Expanded(
-              child: Padding(
+              child: ListView(
                 padding: const EdgeInsets.symmetric(horizontal: 32),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    // Logo
-                    Image.asset(
-                      'assets/logo.png',
-                      height: 120,
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
+                children: [
+                  const SizedBox(height: 24),
+
+                  // Logo
+                  Center(
+                    child: Image.asset('assets/logo.png', height: 100),
+                  ),
+                  const SizedBox(height: 8),
+                  Center(
+                    child: Text(
                       'Scientific Field Data Collection',
                       style: GoogleFonts.inter(
                         fontSize: 14,
                         color: AppColors.textTertiary,
                       ),
                     ),
-                    const SizedBox(height: 48),
+                  ),
+                  const SizedBox(height: 32),
 
-                    // Continue previous session
-                    if (_cachedSession != null)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 24),
-                        child: SizedBox(
-                          width: double.infinity,
-                          child: OutlinedButton(
-                            onPressed: () {
-                              Navigator.pushNamed(
-                                context,
-                                '/form',
-                                arguments: _cachedSession,
-                              );
-                            },
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: AppColors.accent,
-                              side: const BorderSide(color: AppColors.accent),
-                              padding: const EdgeInsets.symmetric(
-                                  vertical: 14, horizontal: 16),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                            ),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                const Icon(Icons.play_arrow_rounded, size: 20),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    'Continue: ${_cachedSession!.name}',
-                                    style: GoogleFonts.inter(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-
-                    // Session ID input
-                    TextField(
-                      controller: _controller,
-                      keyboardType: TextInputType.number,
-                      textInputAction: TextInputAction.go,
-                      onSubmitted: (_) => _loadForm(),
-                      style: GoogleFonts.inter(
-                        fontSize: 16,
-                        color: AppColors.textPrimary,
-                      ),
-                      decoration: const InputDecoration(
-                        hintText: 'Session ID',
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-
-                    // Error message
-                    if (_error != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: Text(
-                          _error!,
-                          style: GoogleFonts.inter(
-                            fontSize: 14,
-                            color: AppColors.error,
-                          ),
-                        ),
-                      ),
-                    const SizedBox(height: 24),
-
-                    // Load Form button
+                  // Continue previous session shortcut
+                  if (_cachedSession != null) ...[
                     SizedBox(
                       width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: _loading ? null : _loadForm,
-                        child: _loading
-                            ? const SizedBox(
-                                height: 20,
-                                width: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
+                      child: OutlinedButton(
+                        onPressed: () {
+                          Navigator.pushNamed(
+                            context,
+                            '/form',
+                            arguments: _cachedSession,
+                          );
+                        },
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.accent,
+                          side: const BorderSide(color: AppColors.accent),
+                          padding: const EdgeInsets.symmetric(
+                              vertical: 14, horizontal: 16),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(Icons.play_arrow_rounded, size: 20),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Continue: ${_cachedSession!.name}',
+                                style: GoogleFonts.inter(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
                                 ),
-                              )
-                            : const Text('Load Form'),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
+                    const SizedBox(height: 24),
                   ],
-                ),
+
+                  // Section header
+                  Text(
+                    'My Sessions',
+                    style: GoogleFonts.inter(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textSecondary,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Sessions list or empty state
+                  if (_subscriptions.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 32),
+                      child: Column(
+                        children: [
+                          Icon(
+                            Icons.inbox_outlined,
+                            size: 40,
+                            color: AppColors.textTertiary,
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            'No sessions yet.',
+                            style: GoogleFonts.inter(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w500,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            _isOnline
+                                ? 'Tap Browse to find and join a session.'
+                                : 'Go online to browse and join sessions.',
+                            style: GoogleFonts.inter(
+                              fontSize: 13,
+                              color: AppColors.textTertiary,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                      ),
+                    )
+                  else
+                    ..._subscriptions.map((session) => _SessionCard(
+                          session: session,
+                          onTap: () async {
+                            final nav = Navigator.of(context);
+                            await PreferencesService.cacheSession(session);
+                            if (!mounted) return;
+                            nav.pushNamed('/form', arguments: session);
+                          },
+                        )),
+
+                  const SizedBox(height: 32),
+                ],
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SessionCard extends StatelessWidget {
+  final Session session;
+  final VoidCallback onTap;
+
+  const _SessionCard({required this.session, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            border: Border.all(color: AppColors.borderColor),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      session.name,
+                      style: GoogleFonts.inter(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    if (session.description.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        session.description,
+                        style: GoogleFonts.inter(
+                          fontSize: 13,
+                          color: AppColors.textSecondary,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.chevron_right,
+                color: AppColors.textTertiary,
+              ),
+            ],
+          ),
         ),
       ),
     );

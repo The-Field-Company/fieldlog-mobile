@@ -60,6 +60,116 @@ class ApiService {
     return Session.fromJson(json);
   }
 
+  static Future<List<Session>> getSubscriptions() async {
+    final serverUrl = await PreferencesService.getServerUrl();
+    final url = Uri.parse('$serverUrl/api/subscriptions/');
+
+    final http.Response response;
+    final client = SentryHttpClient();
+    try {
+      response = await client
+          .get(url, headers: await _authHeaders())
+          .timeout(_httpTimeout);
+    } on TimeoutException {
+      throw ApiException('Request timed out. Check your connection and try again.');
+    } finally {
+      client.close();
+    }
+
+    if (response.statusCode == 401 || response.statusCode == 403) {
+      throw ApiException('Authentication required.', statusCode: response.statusCode);
+    }
+    if (response.statusCode >= 500) {
+      throw ApiException('The server is temporarily unavailable. Please try again later.', statusCode: response.statusCode);
+    }
+    if (response.statusCode != 200) {
+      throw ApiException('Something went wrong. Please try again.', statusCode: response.statusCode);
+    }
+
+    final list = jsonDecode(response.body) as List<dynamic>;
+    return list.map((e) => Session.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
+  static Future<List<Session>> getPublicSessions() async {
+    final serverUrl = await PreferencesService.getServerUrl();
+    final url = Uri.parse('$serverUrl/api/sessions/?is_public=true');
+
+    final http.Response response;
+    final client = SentryHttpClient();
+    try {
+      response = await client
+          .get(url, headers: await _authHeaders())
+          .timeout(_httpTimeout);
+    } on TimeoutException {
+      throw ApiException('Request timed out. Check your connection and try again.');
+    } finally {
+      client.close();
+    }
+
+    if (response.statusCode >= 500) {
+      throw ApiException('The server is temporarily unavailable. Please try again later.', statusCode: response.statusCode);
+    }
+    if (response.statusCode != 200) {
+      throw ApiException('Something went wrong. Please try again.', statusCode: response.statusCode);
+    }
+
+    final list = jsonDecode(response.body) as List<dynamic>;
+    return list.map((e) => Session.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
+  static Future<void> subscribeToSession(int sessionId) async {
+    final serverUrl = await PreferencesService.getServerUrl();
+    final url = Uri.parse('$serverUrl/api/sessions/$sessionId/subscribe/');
+
+    final http.Response response;
+    final client = SentryHttpClient();
+    try {
+      response = await client
+          .post(url, headers: await _authHeaders())
+          .timeout(_httpTimeout);
+    } on TimeoutException {
+      throw ApiException('Request timed out. Check your connection and try again.');
+    } finally {
+      client.close();
+    }
+
+    if (response.statusCode == 403) {
+      throw ApiException('This session is not open for subscriptions.', statusCode: 403);
+    }
+    if (response.statusCode >= 500) {
+      throw ApiException('The server is temporarily unavailable. Please try again later.', statusCode: response.statusCode);
+    }
+    // 200 = already subscribed (idempotent), 201 = newly subscribed
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      throw ApiException('Something went wrong. Please try again.', statusCode: response.statusCode);
+    }
+  }
+
+  static Future<void> unsubscribeFromSession(int sessionId) async {
+    final serverUrl = await PreferencesService.getServerUrl();
+    final url = Uri.parse('$serverUrl/api/sessions/$sessionId/subscribe/');
+
+    final http.Response response;
+    final client = SentryHttpClient();
+    try {
+      response = await client
+          .delete(url, headers: await _authHeaders())
+          .timeout(_httpTimeout);
+    } on TimeoutException {
+      throw ApiException('Request timed out. Check your connection and try again.');
+    } finally {
+      client.close();
+    }
+
+    if (response.statusCode >= 500) {
+      throw ApiException('The server is temporarily unavailable. Please try again later.', statusCode: response.statusCode);
+    }
+    // 204 = unsubscribed, 200 = also acceptable
+    if (response.statusCode != 204 && response.statusCode != 200) {
+      throw ApiException('Something went wrong. Please try again.', statusCode: response.statusCode);
+    }
+  }
+
   static Future<void> createSubmission(
     int sessionId,
     Map<String, dynamic> data, {

@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../theme/app_colors.dart';
+import '../services/api_service.dart';
 import '../services/auth_service.dart';
 import '../services/powersync_service.dart';
 
@@ -36,6 +38,13 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       await AuthService.login(username, password);
       await PowerSyncService.initPowerSync();
+      // Seed subscriptions so the entry screen has data immediately. Best-effort.
+      try {
+        final subscriptions = await ApiService.getSubscriptions();
+        await PowerSyncService.seedSessions(subscriptions);
+      } catch (e) {
+        if (kDebugMode) debugPrint('[Seed] subscription seed failed after login: $e');
+      }
       if (!mounted) return;
       Navigator.pushReplacementNamed(context, '/');
     } on SocketException {

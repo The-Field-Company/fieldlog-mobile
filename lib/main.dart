@@ -7,7 +7,9 @@ import 'screens/entry_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/form_screen.dart';
 import 'screens/success_screen.dart';
+import 'screens/browse_sessions_screen.dart';
 import 'services/auth_service.dart';
+import 'services/api_service.dart';
 import 'services/powersync_service.dart';
 import 'services/connectivity_service.dart';
 
@@ -32,6 +34,15 @@ void main() async {
         initialRoute = '/';
         try {
           await PowerSyncService.initPowerSync();
+          // Seed subscribed sessions immediately so the entry screen has data
+          // before PowerSync's own sync cycle delivers rows. Best-effort.
+          try {
+            final subscriptions = await ApiService.getSubscriptions();
+            await PowerSyncService.seedSessions(subscriptions);
+          } catch (e, stackTrace) {
+            await Sentry.captureException(e, stackTrace: stackTrace);
+            if (kDebugMode) debugPrint('[Seed] subscription seed failed: $e');
+          }
         } catch (e, stackTrace) {
           await Sentry.captureException(e, stackTrace: stackTrace);
           if (kDebugMode) debugPrint('[PowerSync] init failed on startup: $e');
@@ -62,6 +73,7 @@ class FieldLogApp extends StatelessWidget {
         '/settings': (context) => const SettingsScreen(),
         '/form': (context) => const FormScreen(),
         '/success': (context) => const SuccessScreen(),
+        '/browse': (context) => const BrowseSessionsScreen(),
       },
     );
   }
