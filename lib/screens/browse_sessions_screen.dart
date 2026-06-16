@@ -74,9 +74,11 @@ class _BrowseSessionsScreenState extends State<BrowseSessionsScreen> {
   Future<Set<int>> _fetchSubscribedIds() async {
     final db = PowerSyncService.getPowerSync();
     if (db == null) return {};
-    final rows = await db.getAll('SELECT id FROM fieldlog_session');
+    final rows = await db.getAll(
+      'SELECT session_id FROM fieldlog_sessionsubscription',
+    );
     return rows
-        .map((row) => int.tryParse(row['id']?.toString() ?? '') ?? 0)
+        .map((row) => int.tryParse(row['session_id']?.toString() ?? '') ?? 0)
         .where((id) => id != 0)
         .toSet();
   }
@@ -84,32 +86,48 @@ class _BrowseSessionsScreenState extends State<BrowseSessionsScreen> {
   Future<void> _subscribe(Session session) async {
     setState(() => _loadingIds.add(session.id));
     try {
-      await ApiService.subscribeToSession(session.id);
-      // Upsert locally so the entry screen updates immediately without waiting
-      // for the PowerSync sync cycle.
       final db = PowerSyncService.getPowerSync();
-      await db?.execute(
+      if (db == null) throw Exception('Database not ready');
+
+      // Write the subscription locally. PowerSync queues and uploads this to
+      // the server. id = session_id.toString() so the server sync returns the
+      // same id and PowerSync reconciles without creating a duplicate row.
+      await db.execute(
+        'INSERT OR IGNORE INTO fieldlog_sessionsubscription (id, session_id)'
+        ' VALUES (?, ?)',
+        [session.id.toString(), session.id],
+      );
+
+      final params = [
+        session.id.toString(),
+        session.name,
+        session.description,
+        jsonEncode(session.formConfig),
+        session.isActive ? 1 : 0,
+        session.isPublic ? 1 : 0,
+        session.createdAt,
+      ];
+      // Cache session data so the entry screen can show the session even if
+      // PowerSync clears fieldlog_session before the upload is confirmed.
+      await db.execute(
+        'INSERT OR REPLACE INTO local_sessions'
+        ' (id, name, description, form_config, is_active, is_public, created_at)'
+        ' VALUES (?, ?, ?, ?, ?, ?, ?)',
+        params,
+      );
+      // Optimistic upsert for immediate display in the entry screen.
+      await db.execute(
         'INSERT OR REPLACE INTO fieldlog_session'
         ' (id, name, description, form_config, is_active, is_public, created_at)'
         ' VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [
-          session.id.toString(),
-          session.name,
-          session.description,
-          jsonEncode(session.formConfig),
-          session.isActive ? 1 : 0,
-          session.isPublic ? 1 : 0,
-          session.createdAt,
-        ],
+        params,
       );
+
       if (!mounted) return;
       setState(() => _subscribedIds.add(session.id));
-    } on ApiException catch (e) {
-      if (!mounted) return;
-      _showError(e.message);
     } catch (_) {
       if (!mounted) return;
-      _showError('Could not subscribe. Check your connection.');
+      _showError('Could not subscribe. Try again.');
     } finally {
       if (mounted) setState(() => _loadingIds.remove(session.id));
     }
@@ -118,21 +136,29 @@ class _BrowseSessionsScreenState extends State<BrowseSessionsScreen> {
   Future<void> _unsubscribe(Session session) async {
     setState(() => _loadingIds.add(session.id));
     try {
-      await ApiService.unsubscribeFromSession(session.id);
-      // Remove locally so the entry screen updates immediately.
       final db = PowerSyncService.getPowerSync();
-      await db?.execute(
+      if (db == null) throw Exception('Database not ready');
+
+      // Delete subscription locally — PowerSync uploads the delete to the server.
+      await db.execute(
+        'DELETE FROM fieldlog_sessionsubscription WHERE id = ?',
+        [session.id.toString()],
+      );
+      // Remove from both caches for immediate display update.
+      await db.execute(
+        'DELETE FROM local_sessions WHERE id = ?',
+        [session.id.toString()],
+      );
+      await db.execute(
         'DELETE FROM fieldlog_session WHERE id = ?',
         [session.id.toString()],
       );
+
       if (!mounted) return;
       setState(() => _subscribedIds.remove(session.id));
-    } on ApiException catch (e) {
-      if (!mounted) return;
-      _showError(e.message);
     } catch (_) {
       if (!mounted) return;
-      _showError('Could not unsubscribe. Check your connection.');
+      _showError('Could not unsubscribe. Try again.');
     } finally {
       if (mounted) setState(() => _loadingIds.remove(session.id));
     }
@@ -310,9 +336,7 @@ class _BrowseSessionsScreenState extends State<BrowseSessionsScreen> {
                       )
                     : isSubscribed
                         ? OutlinedButton(
-                            onPressed: _isOnline
-                                ? () => _unsubscribe(session)
-                                : null,
+                            onPressed: () => _unsubscribe(session),
                             style: OutlinedButton.styleFrom(
                               foregroundColor: AppColors.textSecondary,
                               side: const BorderSide(
@@ -329,9 +353,7 @@ class _BrowseSessionsScreenState extends State<BrowseSessionsScreen> {
                             ),
                           )
                         : ElevatedButton(
-                            onPressed: _isOnline
-                                ? () => _subscribe(session)
-                                : null,
+                            onPressed: () => _subscribe(session),
                             style: ElevatedButton.styleFrom(
                               backgroundColor: AppColors.accent,
                               foregroundColor: Colors.white,

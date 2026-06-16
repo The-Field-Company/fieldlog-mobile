@@ -52,7 +52,17 @@ class _EntryScreenState extends State<EntryScreen> {
     final db = PowerSyncService.getPowerSync();
     if (db == null) return;
     _sessionSubscription = db
-        .watch('SELECT * FROM fieldlog_session ORDER BY name ASC')
+        .watch(
+          // Show PowerSync-confirmed sessions, plus any sessions cached in
+          // local_sessions that are still subscribed but not yet confirmed
+          // (i.e. during the upload window before PowerSync syncs them back).
+          'SELECT * FROM fieldlog_session'
+          ' UNION'
+          ' SELECT * FROM local_sessions'
+          '   WHERE id NOT IN (SELECT id FROM fieldlog_session)'
+          '     AND id IN (SELECT id FROM fieldlog_sessionsubscription)'
+          ' ORDER BY name ASC',
+        )
         .listen((rows) {
       if (!mounted) return;
       setState(() {
@@ -62,15 +72,14 @@ class _EntryScreenState extends State<EntryScreen> {
   }
 
   Future<void> _logout() async {
-    // Clear session rows before disconnecting so a different user on the same
-    // device does not see stale subscriptions.
-    final db = PowerSyncService.getPowerSync();
+    // disconnectAndClear() wipes all managed tables, local-only tables, and the
+    // CRUD upload queue — no manual DELETE needed and no stale data or pending
+    // ops carry over to the next user on this device.
     try {
-      await db?.execute('DELETE FROM fieldlog_session');
+      await PowerSyncService.disconnectPowerSync();
     } catch (e, stackTrace) {
       await Sentry.captureException(e, stackTrace: stackTrace);
     }
-    await PowerSyncService.disconnectPowerSync();
     await AuthService.logout();
     await PreferencesService.clearCachedSession();
     if (!mounted) return;
@@ -193,7 +202,7 @@ class _EntryScreenState extends State<EntryScreen> {
 
                   // Section header
                   Text(
-                    'My Sessions',
+                    'Sessions',
                     style: GoogleFonts.inter(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,

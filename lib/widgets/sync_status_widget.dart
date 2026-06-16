@@ -22,12 +22,18 @@ class SyncStatusWidget extends StatefulWidget {
 enum SyncStateTransition { wentOffline, backOnline, syncComplete }
 
 class _SyncStatusWidgetState extends State<SyncStatusWidget> {
-  // Two independent subscriptions:
-  // - connectivity_plus → _connected (immediate OS-level signal)
-  // - PowerSync statusStream → _uploading only
+  // Three pieces of state, from two sources:
+  // - ConnectivityService  → _connected  (OS network interface — fast)
+  // - PowerSync statusStream → _psConnected (WebSocket to PS service) + _uploading
+  //
+  // We keep them separate because they change at different times:
+  //   OS online → _connected=true  (immediate)
+  //   PS WebSocket reconnects → _psConnected=true  (seconds/minutes later)
+  // "Reconnecting…" is shown when OS says online but PS hasn't reconnected yet.
   StreamSubscription<bool>? _connectivitySubscription;
   StreamSubscription<SyncStatus>? _psSubscription;
   bool _connected = false;
+  bool _psConnected = false;
   bool _uploading = false;
   bool? _previousConnected;
 
@@ -38,9 +44,7 @@ class _SyncStatusWidgetState extends State<SyncStatusWidget> {
   }
 
   void _listenToStatus() {
-    // 1. Device-level connectivity for immediate offline/online detection.
-    //    Responds as soon as the OS reports a network interface change, without
-    //    waiting for PowerSync's WebSocket to time out (up to 30 s).
+    // 1. OS-level connectivity — drives offline/online toasts.
     _connected = ConnectivityService.isOnline;
     _previousConnected = _connected;
 
@@ -59,20 +63,24 @@ class _SyncStatusWidgetState extends State<SyncStatusWidget> {
       _previousConnected = isOnline;
     });
 
-    // 2. PowerSync stream — upload state and syncComplete transition only.
-    //    No longer used for offline/online detection.
+    // 2. PowerSync stream — WebSocket connection state, upload state, and
+    //    the syncComplete transition.
     final db = PowerSyncService.getPowerSync();
     if (db == null) return;
 
+    _psConnected = db.currentStatus.connected;
     _uploading = db.currentStatus.uploading;
 
     _psSubscription = db.statusStream.listen((status) {
       if (!mounted) return;
       final wasUploading = _uploading;
-      setState(() => _uploading = status.uploading);
+      setState(() {
+        _psConnected = status.connected;
+        _uploading = status.uploading;
+      });
 
       if (widget.onTransition != null) {
-        if (wasUploading && !status.uploading && _connected) {
+        if (wasUploading && !status.uploading && status.connected) {
           widget.onTransition!(SyncStateTransition.syncComplete);
         }
       }
@@ -91,19 +99,30 @@ class _SyncStatusWidgetState extends State<SyncStatusWidget> {
     late final IconData icon;
     late final String label;
     late final Color color;
+    // Show a spinner for both "uploading" and "reconnecting" states.
+    final bool showSpinner;
 
     if (!_connected) {
       icon = Icons.cloud_off_outlined;
       label = 'Offline';
       color = Colors.orange.shade700;
+      showSpinner = false;
     } else if (_uploading) {
       icon = Icons.cloud_upload_outlined;
       label = 'Syncing';
       color = AppColors.accentLight;
+      showSpinner = true;
+    } else if (!_psConnected) {
+      // OS has network but PowerSync WebSocket hasn't reconnected yet.
+      icon = Icons.cloud_sync_outlined;
+      label = 'Reconnecting';
+      color = Colors.orange.shade400;
+      showSpinner = true;
     } else {
       icon = Icons.cloud_outlined;
       label = 'Online';
       color = AppColors.accent;
+      showSpinner = false;
     }
 
     return Container(
@@ -115,7 +134,7 @@ class _SyncStatusWidgetState extends State<SyncStatusWidget> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (_uploading)
+          if (showSpinner)
             SizedBox(
               width: 12,
               height: 12,

@@ -17,4 +17,21 @@ const schema = Schema([
     Column.integer('is_public'),
     Column.text('created_at'),
   ]),
+  // Bidirectional sync: writes are uploaded via uploadData(); rows sync down
+  // from the server using session_id::text as the row id so client and server
+  // always agree on the key (no duplicate-row reconciliation needed).
+  Table('fieldlog_sessionsubscription', [
+    Column.integer('session_id'),
+  ]),
+  // Local-only session data cache. Never synced. Keeps session details visible
+  // during the window between subscription upload and PowerSync confirming the
+  // row in fieldlog_session. Cleared on logout via disconnectAndClear().
+  Table.localOnly('local_sessions', [
+    Column.text('name'),
+    Column.text('description'),
+    Column.text('form_config'),
+    Column.integer('is_active'),
+    Column.integer('is_public'),
+    Column.text('created_at'),
+  ]),
 ]);

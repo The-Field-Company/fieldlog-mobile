@@ -53,45 +53,63 @@ class FieldLogConnector extends PowerSyncBackendConnector {
     };
 
     for (final op in transaction.crud) {
-      if (op.table != 'fieldlog_submission') continue;
-      if (op.op != UpdateType.put) continue;
+      if (op.table == 'fieldlog_submission') {
+        if (op.op != UpdateType.put) continue;
 
-      final record = op.opData;
-      final sessionId = record?['session_id'];
+        final record = op.opData;
+        final sessionId = record?['session_id'];
 
-      dynamic parsedData;
-      try {
-        parsedData = jsonDecode(record?['data'] as String? ?? '{}');
-      } catch (e) {
-        // H4: malformed record data — log and skip rather than silently drop.
-        // The transaction will still complete so PowerSync doesn't retry forever.
-        if (kDebugMode) {
-          debugPrint('[PowerSync] Skipping record ${op.id} — malformed JSON data: $e');
+        dynamic parsedData;
+        try {
+          parsedData = jsonDecode(record?['data'] as String? ?? '{}');
+        } catch (e) {
+          // H4: malformed record data — log and skip rather than silently drop.
+          // The transaction will still complete so PowerSync doesn't retry forever.
+          if (kDebugMode) {
+            debugPrint('[PowerSync] Skipping record ${op.id} — malformed JSON data: $e');
+          }
+          await Sentry.captureMessage(
+            'PowerSync skipped record due to malformed JSON data',
+            level: SentryLevel.warning,
+            withScope: (scope) => scope.setTag('op_id', op.id),
+          );
+          continue;
         }
-        await Sentry.captureMessage(
-          'PowerSync skipped record due to malformed JSON data',
-          level: SentryLevel.warning,
-          withScope: (scope) => scope.setTag('op_id', op.id),
+
+        final url = Uri.parse('$serverUrl/api/sessions/$sessionId/submissions/');
+        final body = jsonEncode({
+          'id': op.id,
+          'submitted_by': record?['submitted_by'] ?? 'Anonymous',
+          'data': parsedData,
+        });
+
+        // M2: retry transient failures (timeout, 5xx) with exponential backoff.
+        // Permanent failures (4xx) throw immediately. After all retries exhausted,
+        // throw so PowerSync retries the whole transaction on the next sync cycle.
+        await _postWithRetry(
+          opId: op.id,
+          url: url,
+          headers: headers,
+          body: body,
         );
-        continue;
+      } else if (op.table == 'fieldlog_sessionsubscription') {
+        // id is always session_id.toString() (set by the client), so we can
+        // recover the session id from op.id for both PUT and DELETE ops.
+        final sessionId = op.op == UpdateType.delete
+            ? int.tryParse(op.id)
+            : int.tryParse(op.opData?['session_id']?.toString() ?? '');
+        if (sessionId == null) continue;
+
+        final url = Uri.parse('$serverUrl/api/sessions/$sessionId/subscribe/');
+        await _subscriptionWithRetry(
+          opId: op.id,
+          url: url,
+          headers: headers,
+          isDelete: op.op == UpdateType.delete,
+        );
       }
-
-      final url = Uri.parse('$serverUrl/api/sessions/$sessionId/submissions/');
-      final body = jsonEncode({
-        'id': op.id,
-        'submitted_by': record?['submitted_by'] ?? 'Anonymous',
-        'data': parsedData,
-      });
-
-      // M2: retry transient failures (timeout, 5xx) with exponential backoff.
-      // Permanent failures (4xx) throw immediately. After all retries exhausted,
-      // throw so PowerSync retries the whole transaction on the next sync cycle.
-      await _postWithRetry(
-        opId: op.id,
-        url: url,
-        headers: headers,
-        body: body,
-      );
+      // All other tables (e.g. fieldlog_session) are server-managed; local
+      // writes are optimistic only and do not need to be uploaded.
     }
 
     await transaction.complete();
@@ -168,6 +186,68 @@ class FieldLogConnector extends PowerSyncBackendConnector {
       // Exponential backoff: 1 s, 2 s, 4 s
       await Future.delayed(Duration(seconds: 1 << (attempt - 1)));
     }
+    } finally {
+      client.close();
+    }
+  }
+
+  /// Subscribe / unsubscribe with the same retry logic as [_postWithRetry].
+  /// Uses POST for subscribe (no body) and DELETE for unsubscribe.
+  Future<void> _subscriptionWithRetry({
+    required String opId,
+    required Uri url,
+    required Map<String, String> headers,
+    required bool isDelete,
+  }) async {
+    int attempt = 0;
+    final client = SentryHttpClient();
+    try {
+      while (true) {
+        attempt++;
+        try {
+          final response = isDelete
+              ? await client.delete(url, headers: headers).timeout(_httpTimeout)
+              : await client.post(url, headers: headers).timeout(_httpTimeout);
+
+          // POST: 200 = already subscribed, 201 = new subscription
+          // DELETE: 200/204 = deleted, 404 = already gone (treat as success)
+          if (response.ok ||
+              response.statusCode == 204 ||
+              (isDelete && response.statusCode == 404)) return;
+
+          if (response.statusCode >= 400 && response.statusCode < 500) {
+            final error = Exception(
+                'Subscription upload failed (${response.statusCode}) for op $opId');
+            await Sentry.captureException(error,
+                withScope: (scope) {
+                  scope.setTag('op_id', opId);
+                  scope.setTag('http_status', response.statusCode.toString());
+                });
+            throw error;
+          }
+
+          if (attempt > _maxRetries) {
+            throw Exception(
+                'Subscription upload failed after $_maxRetries attempts for op $opId');
+          }
+
+          if (kDebugMode) {
+            debugPrint(
+                '[PowerSync] 5xx on attempt $attempt for subscription $opId, retrying...');
+          }
+        } on TimeoutException {
+          if (attempt > _maxRetries) {
+            throw Exception(
+                'Subscription upload timed out after $_maxRetries attempts for op $opId');
+          }
+          if (kDebugMode) {
+            debugPrint(
+                '[PowerSync] Timeout on attempt $attempt for subscription $opId, retrying...');
+          }
+        }
+
+        await Future.delayed(Duration(seconds: 1 << (attempt - 1)));
+      }
     } finally {
       client.close();
     }
