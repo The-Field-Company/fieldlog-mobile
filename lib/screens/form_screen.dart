@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
@@ -192,26 +191,6 @@ class _FormScreenState extends State<FormScreen> {
     );
   }
 
-  /// Walk form data and base64-encode any file field values.
-  /// File fields store `{ 'file_path': '...', 'file_name': '...' }`.
-  Future<void> _encodeFiles(Map<String, dynamic> data) async {
-    for (final key in data.keys.toList()) {
-      final value = data[key];
-      if (value is Map<String, dynamic> && value.containsKey('file_path')) {
-        final filePath = value['file_path'] as String;
-        final fileName = value['file_name'] as String? ?? 'file';
-        final file = File(filePath);
-        if (await file.exists()) {
-          final bytes = await file.readAsBytes();
-          data[key] = {
-            'file_name': fileName,
-            'data': base64Encode(bytes),
-          };
-        }
-      }
-    }
-  }
-
   Future<void> _submitFormData(Map<String, dynamic> data) async {
     final transaction = Sentry.startTransaction(
       'submit_observation',
@@ -221,17 +200,6 @@ class _FormScreenState extends State<FormScreen> {
     transaction.setTag('session_id', _session.id.toString());
 
     try {
-      // Span 1: base64-encode any captured files before submission
-      final encodeSpan = transaction.startChild(
-        'encode_files',
-        description: 'Base64-encode file attachments',
-      );
-      try {
-        await _encodeFiles(data);
-      } finally {
-        await encodeSpan.finish();
-      }
-
       // Attach location if tracking. Use prefetched fix when fresh, else capture now.
       if (_session.trackLocation) {
         final location =
@@ -241,7 +209,6 @@ class _FormScreenState extends State<FormScreen> {
         }
       }
 
-      // Span 2: write to local PowerSync SQLite
       final submitSpan = transaction.startChild(
         'submit_local',
         description: 'Insert submission into PowerSync local DB',

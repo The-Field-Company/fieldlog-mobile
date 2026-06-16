@@ -35,19 +35,33 @@ class _FileFieldWidgetState extends State<FileFieldWidget> {
     );
     if (picked == null) return;
 
-    // Copy to app documents with UUID filename
     final dir = await getApplicationDocumentsDirectory();
-    final ext = picked.path.split('.').last;
-    final newPath = '${dir.path}/${const Uuid().v4()}.$ext';
+    final ext = picked.path.split('.').last.toLowerCase();
+
+    if (!{'jpg', 'jpeg', 'png', 'webp', 'heic'}.contains(ext)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Unsupported file type (.$ext). Please choose a JPG, PNG, WEBP, or HEIC image.',
+            ),
+          ),
+        );
+      }
+      return;
+    }
+
+    final id = const Uuid().v4();
+    final newPath = '${dir.path}/$id.$ext';
     final saved = await File(picked.path).copy(newPath);
 
     // Check file size
     final bytes = await saved.length();
     final mb = bytes / (1024 * 1024);
-    if (mb > 5) {
+    if (mb > 10) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('File too large (max 5MB)')),
+          const SnackBar(content: Text('File too large (max 10 MB).')),
         );
       }
       await saved.delete();
@@ -65,7 +79,9 @@ class _FileFieldWidgetState extends State<FileFieldWidget> {
     setState(() => _file = saved);
     widget.onChanged({
       'file_path': saved.path,
-      'file_name': '${const Uuid().v4()}.$ext',
+      'file_name': '$id.$ext',
+      'original_name': picked.name.isNotEmpty ? picked.name : '$id.$ext',
+      'file_size': bytes,
     });
   }
 

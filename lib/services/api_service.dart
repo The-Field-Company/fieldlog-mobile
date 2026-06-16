@@ -139,9 +139,100 @@ class ApiService {
     if (response.statusCode >= 500) {
       throw ApiException('The server is temporarily unavailable. Please try again later.', statusCode: response.statusCode);
     }
-    // 200 = already subscribed (idempotent), 201 = newly subscribed
     if (response.statusCode != 200 && response.statusCode != 201) {
       throw ApiException('Something went wrong. Please try again.', statusCode: response.statusCode);
+    }
+  }
+
+  static Future<Map<String, dynamic>> presignUpload({
+    required String fileName,
+    required String contentType,
+    String? sessionId,
+  }) async {
+    final serverUrl = await PreferencesService.getServerUrl();
+    final url = Uri.parse('$serverUrl/api/uploads/presign/');
+
+    final body = <String, dynamic>{
+      'filename': fileName,
+      'content_type': contentType,
+    };
+    if (sessionId != null) body['session_id'] = sessionId;
+
+    final http.Response response;
+    final client = SentryHttpClient();
+    try {
+      response = await client
+          .post(
+            url,
+            headers: {
+              'Content-Type': 'application/json',
+              ...await _authHeaders(),
+            },
+            body: jsonEncode(body),
+          )
+          .timeout(_httpTimeout);
+    } on TimeoutException {
+      throw ApiException('Upload presign timed out. Check your connection.');
+    } finally {
+      client.close();
+    }
+
+    if (response.statusCode == 401 || response.statusCode == 403) {
+      throw ApiException('Upload not authorized.', statusCode: response.statusCode);
+    }
+    if (response.statusCode >= 500) {
+      throw ApiException(
+        'Server error during upload presign.',
+        statusCode: response.statusCode,
+      );
+    }
+    if (response.statusCode != 200) {
+      throw ApiException('Upload presign failed.', statusCode: response.statusCode);
+    }
+
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  static Future<void> confirmUpload({
+    required String attachmentId,
+    String? sessionId,
+  }) async {
+    final serverUrl = await PreferencesService.getServerUrl();
+    final url = Uri.parse('$serverUrl/api/uploads/$attachmentId/confirm/');
+
+    final body = <String, dynamic>{};
+    if (sessionId != null) body['session_id'] = sessionId;
+
+    final http.Response response;
+    final client = SentryHttpClient();
+    try {
+      response = await client
+          .post(
+            url,
+            headers: {
+              'Content-Type': 'application/json',
+              ...await _authHeaders(),
+            },
+            body: jsonEncode(body),
+          )
+          .timeout(_httpTimeout);
+    } on TimeoutException {
+      throw ApiException('Upload confirm timed out. Check your connection.');
+    } finally {
+      client.close();
+    }
+
+    if (response.statusCode == 401 || response.statusCode == 403) {
+      throw ApiException('Upload not authorized.', statusCode: response.statusCode);
+    }
+    if (response.statusCode >= 500) {
+      throw ApiException(
+        'Server error during upload confirm.',
+        statusCode: response.statusCode,
+      );
+    }
+    if (response.statusCode != 200) {
+      throw ApiException('Upload could not be confirmed.', statusCode: response.statusCode);
     }
   }
 
@@ -164,7 +255,6 @@ class ApiService {
     if (response.statusCode >= 500) {
       throw ApiException('The server is temporarily unavailable. Please try again later.', statusCode: response.statusCode);
     }
-    // 204 = unsubscribed, 200 = also acceptable
     if (response.statusCode != 204 && response.statusCode != 200) {
       throw ApiException('Something went wrong. Please try again.', statusCode: response.statusCode);
     }

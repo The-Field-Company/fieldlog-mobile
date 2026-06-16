@@ -12,6 +12,7 @@ import 'services/auth_service.dart';
 import 'services/api_service.dart';
 import 'services/powersync_service.dart';
 import 'services/connectivity_service.dart';
+import 'services/sync_error_service.dart';
 
 void main() async {
   await SentryFlutter.init(
@@ -65,6 +66,7 @@ class FieldLogApp extends StatelessWidget {
       title: 'FieldLog',
       theme: AppTheme.theme,
       debugShowCheckedModeBanner: false,
+      scaffoldMessengerKey: SyncErrorService.messengerKey,
       initialRoute: initialRoute,
       navigatorObservers: [SentryNavigatorObserver()],
       routes: {

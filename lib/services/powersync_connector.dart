@@ -1,11 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:powersync/powersync.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
+import 'api_service.dart';
 import 'auth_service.dart';
 import 'preferences_service.dart';
+import 'sync_error_service.dart';
 
 /// PowerSync backend connector mirroring ui/src/services/powersync/connector.js
 class FieldLogConnector extends PowerSyncBackendConnector {
@@ -76,6 +79,11 @@ class FieldLogConnector extends PowerSyncBackendConnector {
           continue;
         }
 
+        List<String> filesToDelete = [];
+        if (parsedData is Map<String, dynamic>) {
+          filesToDelete = await _uploadPendingFiles(parsedData, sessionId);
+        }
+
         final url = Uri.parse('$serverUrl/api/sessions/$sessionId/submissions/');
         final body = jsonEncode({
           'id': op.id,
@@ -92,6 +100,12 @@ class FieldLogConnector extends PowerSyncBackendConnector {
           headers: headers,
           body: body,
         );
+
+        for (final path in filesToDelete) {
+          try {
+            await File(path).delete();
+          } catch (_) {}
+        }
       } else if (op.table == 'fieldlog_sessionsubscription') {
         // id is always session_id.toString() (set by the client), so we can
         // recover the session id from op.id for both PUT and DELETE ops.
@@ -108,8 +122,6 @@ class FieldLogConnector extends PowerSyncBackendConnector {
           isDelete: op.op == UpdateType.delete,
         );
       }
-      // All other tables (e.g. fieldlog_session) are server-managed; local
-      // writes are optimistic only and do not need to be uploaded.
     }
 
     await transaction.complete();
@@ -120,6 +132,118 @@ class FieldLogConnector extends PowerSyncBackendConnector {
   /// Throws immediately on: 4xx client errors (permanent).
   /// After [_maxRetries] attempts, throws to let PowerSync handle the retry.
   static const _maxRetries = 3;
+  static const _binaryUploadTimeout = Duration(seconds: 120);
+
+  Future<List<String>> _uploadPendingFiles(
+    Map<String, dynamic> data,
+    dynamic sessionId,
+  ) async {
+    final toDelete = <String>[];
+    for (final fieldKey in data.keys.toList()) {
+      final value = data[fieldKey];
+      if (value is! Map<String, dynamic> || !value.containsKey('file_path')) {
+        continue;
+      }
+
+      final filePath = value['file_path'] as String? ?? '';
+      final fileName = value['file_name'] as String? ?? '';
+      final originalName = value['original_name'] as String? ?? fileName;
+      final fileSize = value['file_size'] as int?;
+
+      final file = File(filePath);
+      if (!await file.exists()) {
+        await Sentry.captureMessage(
+          'PowerSync upload: local file missing, dropping field',
+          level: SentryLevel.error,
+          withScope: (scope) {
+            scope.setTag('field', fieldKey);
+            scope.setTag('file_path', filePath);
+          },
+        );
+        data.remove(fieldKey);
+        continue;
+      }
+
+      final ext = fileName.contains('.')
+          ? fileName.split('.').last.toLowerCase()
+          : 'jpg';
+      final contentType = _mimeForExt(ext);
+      if (contentType == 'application/octet-stream') {
+        await Sentry.captureMessage(
+          'PowerSync upload: unsupported file extension, dropping field',
+          level: SentryLevel.error,
+          withScope: (scope) {
+            scope.setTag('field', fieldKey);
+            scope.setTag('ext', ext);
+          },
+        );
+        SyncErrorService.report(
+          'A photo could not be uploaded — unsupported file type (.$ext). '
+          'The submission will be sent without it.',
+        );
+        data.remove(fieldKey);
+        continue;
+      }
+
+      final presign = await ApiService.presignUpload(
+        fileName: fileName,
+        contentType: contentType,
+        sessionId: sessionId?.toString(),
+      );
+      final uploadUrl = presign['upload_url'] as String;
+      final attachmentId = presign['attachment_id'] as String;
+
+      final bytes = await file.readAsBytes();
+      try {
+        await _putWithRetry(
+          url: Uri.parse(uploadUrl),
+          bytes: bytes,
+          contentType: contentType,
+          fileName: fileName,
+        );
+        await ApiService.confirmUpload(
+          attachmentId: attachmentId,
+          sessionId: sessionId?.toString(),
+        );
+      } on SocketException {
+        rethrow;
+      } on Exception {
+        SyncErrorService.report(
+          'A photo in your submission could not be uploaded. '
+          'It will retry automatically.',
+        );
+        rethrow;
+      }
+
+      data[fieldKey] = [
+        {
+          'name': originalName,
+          'attachment_id': attachmentId,
+          'type': contentType,
+          'size': fileSize ?? bytes.length,
+        },
+      ];
+
+      toDelete.add(filePath);
+    }
+    return toDelete;
+  }
+
+  static String _mimeForExt(String ext) {
+    switch (ext) {
+      case 'jpg':
+      case 'jpeg':
+        return 'image/jpeg';
+      case 'png':
+        return 'image/png';
+      case 'webp':
+        return 'image/webp';
+      case 'heic':
+        return 'image/heic';
+      default:
+        return 'application/octet-stream';
+    }
+  }
 
   Future<void> _postWithRetry({
     required String opId,
@@ -191,8 +315,89 @@ class FieldLogConnector extends PowerSyncBackendConnector {
     }
   }
 
-  /// Subscribe / unsubscribe with the same retry logic as [_postWithRetry].
-  /// Uses POST for subscribe (no body) and DELETE for unsubscribe.
+  /// PUT bytes to R2 with retry for transient errors.
+  /// Throws immediately on SocketException (offline) so PowerSync can
+  /// re-trigger uploadData once connectivity is restored.
+  Future<void> _putWithRetry({
+    required Uri url,
+    required List<int> bytes,
+    required String contentType,
+    required String fileName,
+  }) async {
+    int attempt = 0;
+    final client = SentryHttpClient();
+    try {
+      while (true) {
+        attempt++;
+        try {
+          final response = await client
+              .put(url, body: bytes, headers: {'Content-Type': contentType})
+              .timeout(_binaryUploadTimeout);
+
+          if (response.ok) return;
+
+          if (response.statusCode >= 400 && response.statusCode < 500) {
+            final error = Exception(
+              'R2 PUT failed permanently (${response.statusCode}) for $fileName',
+            );
+            await Sentry.captureException(
+              error,
+              withScope: (scope) {
+                scope.setTag('file_name', fileName);
+                scope.setTag('http_status', response.statusCode.toString());
+              },
+            );
+            throw error;
+          }
+
+          if (attempt > _maxRetries) {
+            final error = Exception(
+              'R2 PUT failed after $_maxRetries attempts (${response.statusCode}) for $fileName',
+            );
+            await Sentry.captureException(
+              error,
+              withScope: (scope) {
+                scope.setTag('file_name', fileName);
+                scope.setTag('http_status', response.statusCode.toString());
+              },
+            );
+            throw error;
+          }
+
+          if (kDebugMode) {
+            debugPrint(
+              '[PowerSync] R2 PUT 5xx on attempt $attempt for $fileName (${response.statusCode}), retrying...',
+            );
+          }
+        } on SocketException {
+          // Device is offline — do not burn retry attempts.
+          // PowerSync retries the transaction when connectivity is restored.
+          throw Exception('R2 PUT failed: device offline ($fileName)');
+        } on TimeoutException {
+          if (attempt > _maxRetries) {
+            final error = Exception(
+              'R2 PUT timed out after $_maxRetries attempts for $fileName',
+            );
+            await Sentry.captureException(
+              error,
+              withScope: (scope) => scope.setTag('file_name', fileName),
+            );
+            throw error;
+          }
+          if (kDebugMode) {
+            debugPrint(
+              '[PowerSync] R2 PUT timeout on attempt $attempt for $fileName, retrying...',
+            );
+          }
+        }
+
+        await Future.delayed(Duration(seconds: 1 << (attempt - 1)));
+      }
+    } finally {
+      client.close();
+    }
+  }
+
   Future<void> _subscriptionWithRetry({
     required String opId,
     required Uri url,
@@ -209,11 +414,11 @@ class FieldLogConnector extends PowerSyncBackendConnector {
               ? await client.delete(url, headers: headers).timeout(_httpTimeout)
               : await client.post(url, headers: headers).timeout(_httpTimeout);
 
-          // POST: 200 = already subscribed, 201 = new subscription
-          // DELETE: 200/204 = deleted, 404 = already gone (treat as success)
           if (response.ok ||
               response.statusCode == 204 ||
-              (isDelete && response.statusCode == 404)) return;
+              (isDelete && response.statusCode == 404)) {
+            return;
+          }
 
           if (response.statusCode >= 400 && response.statusCode < 500) {
             final error = Exception(

@@ -46,3 +46,4 @@ app.*.map.json
 
 # Local environment config — copy from .env.json.example and never commit
 .env.json
+.env.local.json
