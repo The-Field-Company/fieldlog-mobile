@@ -17,14 +17,20 @@ class BrowseSessionsScreen extends StatefulWidget {
 
 class _BrowseSessionsScreenState extends State<BrowseSessionsScreen> {
   List<Session> _sessions = [];
-  // IDs of sessions the user is currently subscribed to (from local DB).
   Set<int> _subscribedIds = {};
-  // IDs of sessions with an in-flight subscribe/unsubscribe request.
   final Set<int> _loadingIds = {};
   bool _loading = true;
   String? _error;
   bool _isOnline = true;
   StreamSubscription<bool>? _connectivitySubscription;
+  int? _highlightSessionId;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final args = ModalRoute.of(context)?.settings.arguments;
+    if (args is int) _highlightSessionId = args;
+  }
 
   @override
   void initState() {
@@ -51,6 +57,9 @@ class _BrowseSessionsScreenState extends State<BrowseSessionsScreen> {
       final sessions = await ApiService.getPublicSessions();
       final subscribedIds = await _fetchSubscribedIds();
       if (!mounted) return;
+      if (_highlightSessionId != null) {
+        sessions.sort((a, b) => a.id == _highlightSessionId ? -1 : (b.id == _highlightSessionId ? 1 : 0));
+      }
       setState(() {
         _sessions = sessions;
         _subscribedIds = subscribedIds;
@@ -284,11 +293,16 @@ class _BrowseSessionsScreenState extends State<BrowseSessionsScreen> {
         final isSubscribed = _subscribedIds.contains(session.id);
         final isLoading = _loadingIds.contains(session.id);
 
+        final isHighlighted = session.id == _highlightSessionId;
         return Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           decoration: BoxDecoration(
-            border: Border.all(color: AppColors.borderColor),
+            border: Border.all(
+              color: isHighlighted ? AppColors.accent : AppColors.borderColor,
+              width: isHighlighted ? 2 : 1,
+            ),
             borderRadius: BorderRadius.circular(8),
+            color: isHighlighted ? AppColors.accent.withValues(alpha: 0.04) : null,
           ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,

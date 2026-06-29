@@ -236,6 +236,56 @@ class ApiService {
     }
   }
 
+  static Future<Map<String, dynamic>> getInvite(String token) async {
+    final serverUrl = await PreferencesService.getServerUrl();
+    final url = Uri.parse('$serverUrl/api/invite/$token/');
+
+    final http.Response response;
+    final client = SentryHttpClient();
+    try {
+      response = await client
+          .get(url, headers: {'Accept': 'application/json'})
+          .timeout(_httpTimeout);
+    } on TimeoutException {
+      throw ApiException('Request timed out.');
+    } finally {
+      client.close();
+    }
+
+    if (response.statusCode == 404) throw ApiException('Invalid invite link.', statusCode: 404);
+    if (response.statusCode == 410) throw ApiException('This invite link has expired.', statusCode: 410);
+    if (response.statusCode != 200) throw ApiException('Something went wrong.', statusCode: response.statusCode);
+
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  static Future<Map<String, dynamic>> acceptInvite(String token) async {
+    final serverUrl = await PreferencesService.getServerUrl();
+    final url = Uri.parse('$serverUrl/api/invite/$token/accept/');
+
+    final http.Response response;
+    final client = SentryHttpClient();
+    try {
+      response = await client
+          .post(url, headers: await _authHeaders())
+          .timeout(_httpTimeout);
+    } on TimeoutException {
+      throw ApiException('Request timed out.');
+    } finally {
+      client.close();
+    }
+
+    if (response.statusCode == 401 || response.statusCode == 403) {
+      throw ApiException('Authentication required.', statusCode: response.statusCode);
+    }
+    if (response.statusCode == 410) throw ApiException('This invite link has expired.', statusCode: 410);
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      throw ApiException('Something went wrong.', statusCode: response.statusCode);
+    }
+
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
   static Future<void> unsubscribeFromSession(int sessionId) async {
     final serverUrl = await PreferencesService.getServerUrl();
     final url = Uri.parse('$serverUrl/api/sessions/$sessionId/subscribe/');

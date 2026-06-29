@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'package:app_links/app_links.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
@@ -8,6 +10,7 @@ import 'screens/settings_screen.dart';
 import 'screens/form_screen.dart';
 import 'screens/success_screen.dart';
 import 'screens/browse_sessions_screen.dart';
+import 'screens/invite_screen.dart';
 import 'services/auth_service.dart';
 import 'services/api_service.dart';
 import 'services/powersync_service.dart';
@@ -24,19 +27,14 @@ void main() async {
       options.enableAutoSessionTracking = false;
     },
     appRunner: () async {
-      // Initialise OS-level connectivity before anything else so the signal is
-      // ready before the first widget mounts.
       await ConnectivityService.init();
 
-      // Restore session: check if user is still authenticated
       String initialRoute = '/login';
       final sessionValid = await AuthService.initSession();
       if (sessionValid) {
         initialRoute = '/';
         try {
           await PowerSyncService.initPowerSync();
-          // Seed subscribed sessions immediately so the entry screen has data
-          // before PowerSync's own sync cycle delivers rows. Best-effort.
           try {
             final subscriptions = await ApiService.getSubscriptions();
             await PowerSyncService.seedSessions(subscriptions);
@@ -50,15 +48,71 @@ void main() async {
         }
       }
 
-      runApp(FieldLogApp(initialRoute: initialRoute));
+      final appLinks = AppLinks();
+      Uri? initialLink;
+      try {
+        initialLink = await appLinks.getInitialLink();
+      } catch (_) {}
+
+      runApp(FieldLogApp(
+        initialRoute: initialRoute,
+        initialLink: initialLink,
+        appLinks: appLinks,
+      ));
     },
   );
 }
 
-class FieldLogApp extends StatelessWidget {
+class FieldLogApp extends StatefulWidget {
   final String initialRoute;
+  final Uri? initialLink;
+  final AppLinks appLinks;
 
-  const FieldLogApp({super.key, required this.initialRoute});
+  const FieldLogApp({
+    super.key,
+    required this.initialRoute,
+    required this.appLinks,
+    this.initialLink,
+  });
+
+  @override
+  State<FieldLogApp> createState() => _FieldLogAppState();
+}
+
+class _FieldLogAppState extends State<FieldLogApp> {
+  final _navigatorKey = GlobalKey<NavigatorState>();
+  StreamSubscription<Uri>? _linkSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initialLink != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _handleLink(widget.initialLink!);
+      });
+    }
+    _linkSubscription = widget.appLinks.uriLinkStream.listen(_handleLink);
+  }
+
+  @override
+  void dispose() {
+    _linkSubscription?.cancel();
+    super.dispose();
+  }
+
+  void _handleLink(Uri uri) {
+    final nav = _navigatorKey.currentState;
+    if (nav == null) return;
+    final segments = uri.pathSegments;
+    if (segments.isEmpty) return;
+
+    if (segments[0] == 'sessions' && segments.length >= 2) {
+      final id = int.tryParse(segments[1]);
+      if (id != null) nav.pushNamed('/browse', arguments: id);
+    } else if (segments[0] == 'invite' && segments.length >= 2) {
+      nav.pushNamed('/invite', arguments: segments[1]);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -67,7 +121,8 @@ class FieldLogApp extends StatelessWidget {
       theme: AppTheme.theme,
       debugShowCheckedModeBanner: false,
       scaffoldMessengerKey: SyncErrorService.messengerKey,
-      initialRoute: initialRoute,
+      navigatorKey: _navigatorKey,
+      initialRoute: widget.initialRoute,
       navigatorObservers: [SentryNavigatorObserver()],
       routes: {
         '/login': (context) => const LoginScreen(),
@@ -76,6 +131,7 @@ class FieldLogApp extends StatelessWidget {
         '/form': (context) => const FormScreen(),
         '/success': (context) => const SuccessScreen(),
         '/browse': (context) => const BrowseSessionsScreen(),
+        '/invite': (context) => const InviteScreen(),
       },
     );
   }
