@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../theme/app_colors.dart';
 import '../services/api_service.dart';
+import '../services/auth_service.dart';
 import '../services/powersync_service.dart';
 
 class InviteScreen extends StatefulWidget {
@@ -21,6 +22,7 @@ class _InviteScreenState extends State<InviteScreen> {
   String? _error;
   bool _joining = false;
   bool _joined = false;
+  bool _isAuthenticated = false;
 
   @override
   void didChangeDependencies() {
@@ -29,7 +31,14 @@ class _InviteScreenState extends State<InviteScreen> {
       _token = ModalRoute.of(context)!.settings.arguments as String;
       _initialized = true;
       _loadInvite();
+      _checkAuth();
     }
+  }
+
+  Future<void> _checkAuth() async {
+    final auth = await AuthService.isAuthenticated();
+    if (!mounted) return;
+    setState(() => _isAuthenticated = auth);
   }
 
   Future<void> _loadInvite() async {
@@ -39,6 +48,7 @@ class _InviteScreenState extends State<InviteScreen> {
       setState(() {
         _invite = data;
         _loading = false;
+        if (data['is_subscribed'] == true) _joined = true;
       });
     } on ApiException catch (e) {
       if (!mounted) return;
@@ -219,7 +229,9 @@ class _InviteScreenState extends State<InviteScreen> {
         SizedBox(
           width: double.infinity,
           child: ElevatedButton(
-            onPressed: _joining ? null : _accept,
+            onPressed: _isAuthenticated
+                ? (_joining ? null : _accept)
+                : () => Navigator.pushNamed(context, '/login'),
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.accent,
               foregroundColor: Colors.white,
@@ -232,7 +244,10 @@ class _InviteScreenState extends State<InviteScreen> {
                     width: 20,
                     child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                   )
-                : Text('Join Session', style: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.w600)),
+                : Text(
+                    _isAuthenticated ? 'Join Session' : 'Log in to join',
+                    style: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.w600),
+                  ),
           ),
         ),
         const SizedBox(height: 12),

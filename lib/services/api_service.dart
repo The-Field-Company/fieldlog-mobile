@@ -244,7 +244,7 @@ class ApiService {
     final client = SentryHttpClient();
     try {
       response = await client
-          .get(url, headers: {'Accept': 'application/json'})
+          .get(url, headers: await _authHeaders())
           .timeout(_httpTimeout);
     } on TimeoutException {
       throw ApiException('Request timed out.');
