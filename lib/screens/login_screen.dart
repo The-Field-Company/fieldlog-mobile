@@ -46,7 +46,12 @@ class _LoginScreenState extends State<LoginScreen> {
         if (kDebugMode) debugPrint('[Seed] subscription seed failed after login: $e');
       }
       if (!mounted) return;
-      Navigator.pushReplacementNamed(context, '/');
+      final pendingInviteToken = ModalRoute.of(context)?.settings.arguments as String?;
+      if (pendingInviteToken != null) {
+        Navigator.pushNamedAndRemoveUntil(context, '/invite', (_) => false, arguments: pendingInviteToken);
+      } else {
+        Navigator.pushReplacementNamed(context, '/');
+      }
     } on SocketException {
       setState(() => _error = 'No internet connection');
     } on TimeoutException {

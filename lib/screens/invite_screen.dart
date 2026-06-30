@@ -231,7 +231,7 @@ class _InviteScreenState extends State<InviteScreen> {
           child: ElevatedButton(
             onPressed: _isAuthenticated
                 ? (_joining ? null : _accept)
-                : () => Navigator.pushNamed(context, '/login'),
+                : () => Navigator.pushNamed(context, '/login', arguments: _token),
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.accent,
               foregroundColor: Colors.white,
