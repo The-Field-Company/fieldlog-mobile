@@ -53,14 +53,10 @@ class _EntryScreenState extends State<EntryScreen> {
     if (db == null) return;
     _sessionSubscription = db
         .watch(
-          // Show PowerSync-confirmed sessions, plus any sessions cached in
-          // local_sessions that are still subscribed but not yet confirmed
-          // (i.e. during the upload window before PowerSync syncs them back).
           'SELECT * FROM fieldlog_session'
           ' UNION'
           ' SELECT * FROM local_sessions'
           '   WHERE id NOT IN (SELECT id FROM fieldlog_session)'
-          '     AND id IN (SELECT id FROM fieldlog_sessionsubscription)'
           ' ORDER BY name ASC',
         )
         .listen((rows) {

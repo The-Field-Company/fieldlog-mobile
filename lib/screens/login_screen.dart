@@ -48,7 +48,10 @@ class _LoginScreenState extends State<LoginScreen> {
       if (!mounted) return;
       final pendingInviteToken = ModalRoute.of(context)?.settings.arguments as String?;
       if (pendingInviteToken != null) {
-        Navigator.pushNamedAndRemoveUntil(context, '/invite', (_) => false, arguments: pendingInviteToken);
+        Navigator.pushNamedAndRemoveUntil(
+          context, '/invite', (_) => false,
+          arguments: {'token': pendingInviteToken, 'authenticated': true},
+        );
       } else {
         Navigator.pushReplacementNamed(context, '/');
       }

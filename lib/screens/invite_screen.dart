@@ -1,4 +1,4 @@
-import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../theme/app_colors.dart';
@@ -28,10 +28,16 @@ class _InviteScreenState extends State<InviteScreen> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     if (!_initialized) {
-      _token = ModalRoute.of(context)!.settings.arguments as String;
+      final args = ModalRoute.of(context)!.settings.arguments;
+      if (args is String) {
+        _token = args;
+      } else if (args is Map) {
+        _token = args['token'] as String;
+        if (args['authenticated'] == true) _isAuthenticated = true;
+      }
       _initialized = true;
       _loadInvite();
-      _checkAuth();
+      if (!_isAuthenticated) _checkAuth();
     }
   }
 
@@ -73,31 +79,17 @@ class _InviteScreenState extends State<InviteScreen> {
 
       final db = PowerSyncService.getPowerSync();
       if (db != null) {
-        final params = [
-          sessionId.toString(),
-          result['session_name'] as String? ?? '',
-          result['session_description'] as String? ?? '',
-          jsonEncode(result['form_config'] ?? {}),
-          (result['is_active'] == true) ? 1 : 0,
-          (result['is_public'] == true) ? 1 : 0,
-          result['created_at'] as String? ?? DateTime.now().toIso8601String(),
-        ];
         await db.execute(
           'INSERT OR IGNORE INTO fieldlog_sessionsubscription (id, session_id) VALUES (?, ?)',
           [sessionId.toString(), sessionId],
         );
-        await db.execute(
-          'INSERT OR REPLACE INTO local_sessions'
-          ' (id, name, description, form_config, is_active, is_public, created_at)'
-          ' VALUES (?, ?, ?, ?, ?, ?, ?)',
-          params,
-        );
-        await db.execute(
-          'INSERT OR REPLACE INTO fieldlog_session'
-          ' (id, name, description, form_config, is_active, is_public, created_at)'
-          ' VALUES (?, ?, ?, ?, ?, ?, ?)',
-          params,
-        );
+      }
+
+      try {
+        final subscriptions = await ApiService.getSubscriptions();
+        await PowerSyncService.seedSessions(subscriptions);
+      } catch (e) {
+        if (kDebugMode) debugPrint('[Invite] local_sessions re-seed failed: $e');
       }
 
       if (!mounted) return;
