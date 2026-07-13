@@ -92,7 +92,8 @@ class FieldLogConnector extends PowerSyncBackendConnector {
         });
 
         // M2: retry transient failures (timeout, 5xx) with exponential backoff.
-        // Permanent failures (4xx) throw immediately. After all retries exhausted,
+        // Permanent failures (4xx) are reported to Sentry and skipped so they
+        // can't block the FIFO upload queue. After all retries exhausted,
         // throw so PowerSync retries the whole transaction on the next sync cycle.
         await _postWithRetry(
           opId: op.id,
@@ -129,7 +130,7 @@ class FieldLogConnector extends PowerSyncBackendConnector {
 
   /// POST with exponential backoff for transient errors.
   /// Retries on: network timeout, 5xx server errors.
-  /// Throws immediately on: 4xx client errors (permanent).
+  /// Reports and skips on: 4xx client errors (permanent).
   /// After [_maxRetries] attempts, throws to let PowerSync handle the retry.
   static const _maxRetries = 3;
   static const _binaryUploadTimeout = Duration(seconds: 120);
@@ -264,17 +265,17 @@ class FieldLogConnector extends PowerSyncBackendConnector {
         // 200 = idempotent duplicate, 201 = new, 409 = conflict (also OK)
         if (response.ok || response.statusCode == 409) return;
 
-        // 4xx = permanent failure (bad request, auth, not found) — don't retry
         if (response.statusCode >= 400 && response.statusCode < 500) {
-          final error = Exception('Upload failed (${response.statusCode}) for record $opId: ${response.body}');
-          await Sentry.captureException(
-            error,
+          await Sentry.captureMessage(
+            'Upload rejected (${response.statusCode}) for record $opId, skipping: ${response.body}',
+            level: SentryLevel.error,
             withScope: (scope) {
               scope.setTag('op_id', opId);
               scope.setTag('http_status', response.statusCode.toString());
+              scope.setContexts('request_body', {'body': body});
             },
           );
-          throw error;
+          return;
         }
 
         // 5xx = transient server error — fall through to retry logic below
@@ -421,14 +422,14 @@ class FieldLogConnector extends PowerSyncBackendConnector {
           }
 
           if (response.statusCode >= 400 && response.statusCode < 500) {
-            final error = Exception(
-                'Subscription upload failed (${response.statusCode}) for op $opId');
-            await Sentry.captureException(error,
+            await Sentry.captureMessage(
+                'Subscription upload rejected (${response.statusCode}) for op $opId, skipping',
+                level: SentryLevel.warning,
                 withScope: (scope) {
                   scope.setTag('op_id', opId);
                   scope.setTag('http_status', response.statusCode.toString());
                 });
-            throw error;
+            return;
           }
 
           if (attempt > _maxRetries) {

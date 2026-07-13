@@ -67,6 +67,13 @@ class Session {
 
   String get formMode => formConfig['form_mode'] ?? 'formkit';
   bool get trackLocation => formConfig['track_location'] == true;
-  List<dynamic> get components => formConfig['components'] ?? [];
-  Map<String, dynamic>? get schema => formConfig['schema'];
+  List<dynamic> get components {
+    final value = formConfig['components'];
+    return value is List ? value : [];
+  }
+
+  Map<String, dynamic>? get schema {
+    final value = formConfig['schema'];
+    return value is Map<String, dynamic> ? value : null;
+  }
 }

@@ -74,16 +74,7 @@ class _InviteScreenState extends State<InviteScreen> {
   Future<void> _accept() async {
     setState(() => _joining = true);
     try {
-      final result = await ApiService.acceptInvite(_token);
-      final sessionId = result['session_id'] as int;
-
-      final db = PowerSyncService.getPowerSync();
-      if (db != null) {
-        await db.execute(
-          'INSERT OR IGNORE INTO fieldlog_sessionsubscription (id, session_id) VALUES (?, ?)',
-          [sessionId.toString(), sessionId],
-        );
-      }
+      await ApiService.acceptInvite(_token);
 
       try {
         final subscriptions = await ApiService.getSubscriptions();
