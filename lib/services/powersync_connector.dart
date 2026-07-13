@@ -28,9 +28,10 @@ class FieldLogConnector extends PowerSyncBackendConnector {
     if (token == null) return null;
 
     final powerSyncUrl = await PreferencesService.getPowerSyncUrl();
+    final endpoint = powerSyncUrl.endsWith('/') ? powerSyncUrl : '$powerSyncUrl/';
 
     return PowerSyncCredentials(
-      endpoint: powerSyncUrl,
+      endpoint: endpoint,
       token: token,
     );
   }
