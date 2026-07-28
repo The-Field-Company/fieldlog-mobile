@@ -1,8 +1,84 @@
+import 'dart:io';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../models/tally_component.dart';
 import '../theme/app_colors.dart';
+
+typedef _ImagePlaceholderBuilder = Widget Function(BuildContext, String);
+typedef _ImageErrorBuilder = Widget Function(BuildContext, String, Object?);
+
+/// Renders a tally cell's icon. Flutter's built-in image codecs (used by
+/// [CachedNetworkImage]) don't decode SVG, and wildlife icons picked via
+/// WildlifeIconPicker.vue are always .svg, so those are fetched through the
+/// same cache manager CachedNetworkImage uses internally and rendered with
+/// flutter_svg instead. Any other URL (e.g. a manually pasted raster image)
+/// keeps using CachedNetworkImage unchanged.
+class _NetworkIcon extends StatefulWidget {
+  final String url;
+  final BoxFit fit;
+  final _ImagePlaceholderBuilder placeholder;
+  final _ImageErrorBuilder errorWidget;
+
+  const _NetworkIcon({
+    required this.url,
+    required this.fit,
+    required this.placeholder,
+    required this.errorWidget,
+  });
+
+  bool get _isSvg => url.toLowerCase().split('?').first.endsWith('.svg');
+
+  @override
+  State<_NetworkIcon> createState() => _NetworkIconState();
+}
+
+class _NetworkIconState extends State<_NetworkIcon> {
+  Future<File>? _fileFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget._isSvg) {
+      _fileFuture = DefaultCacheManager().getSingleFile(widget.url);
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _NetworkIcon oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget._isSvg && oldWidget.url != widget.url) {
+      _fileFuture = DefaultCacheManager().getSingleFile(widget.url);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget._isSvg) {
+      return CachedNetworkImage(
+        imageUrl: widget.url,
+        fit: widget.fit,
+        placeholder: widget.placeholder,
+        errorWidget: widget.errorWidget,
+      );
+    }
+    return FutureBuilder<File>(
+      future: _fileFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return widget.placeholder(context, widget.url);
+        }
+        if (snapshot.hasError || !snapshot.hasData) {
+          return widget.errorWidget(context, widget.url, snapshot.error);
+        }
+        return SvgPicture.file(snapshot.data!, fit: widget.fit);
+      },
+    );
+  }
+}
 
 class TallyRenderer extends StatefulWidget {
   final List<dynamic> components;
@@ -206,8 +282,8 @@ class _TallyCardState extends State<_TallyCard>
                             Expanded(
                               child: ClipRRect(
                                 borderRadius: BorderRadius.circular(8),
-                                child: CachedNetworkImage(
-                                  imageUrl: widget.item.image!,
+                                child: _NetworkIcon(
+                                  url: widget.item.image!,
                                   fit: BoxFit.cover,
                                   placeholder: (context, url) => const Center(
                                     child: SizedBox(
@@ -321,8 +397,8 @@ class _GroupCard extends StatelessWidget {
                   Expanded(
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(8),
-                      child: CachedNetworkImage(
-                        imageUrl: item.image!,
+                      child: _NetworkIcon(
+                        url: item.image!,
                         fit: BoxFit.cover,
                         placeholder: (context, url) => const Center(
                           child: SizedBox(
