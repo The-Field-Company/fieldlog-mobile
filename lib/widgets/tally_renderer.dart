@@ -11,12 +11,6 @@ import '../theme/app_colors.dart';
 typedef _ImagePlaceholderBuilder = Widget Function(BuildContext, String);
 typedef _ImageErrorBuilder = Widget Function(BuildContext, String, Object?);
 
-/// Renders a tally cell's icon. Flutter's built-in image codecs (used by
-/// [CachedNetworkImage]) don't decode SVG, and wildlife icons picked via
-/// WildlifeIconPicker.vue are always .svg, so those are fetched through the
-/// same cache manager CachedNetworkImage uses internally and rendered with
-/// flutter_svg instead. Any other URL (e.g. a manually pasted raster image)
-/// keeps using CachedNetworkImage unchanged.
 class _NetworkIcon extends StatefulWidget {
   final String url;
   final BoxFit fit;
@@ -284,7 +278,7 @@ class _TallyCardState extends State<_TallyCard>
                                 borderRadius: BorderRadius.circular(8),
                                 child: _NetworkIcon(
                                   url: widget.item.image!,
-                                  fit: BoxFit.cover,
+                                  fit: BoxFit.contain,
                                   placeholder: (context, url) => const Center(
                                     child: SizedBox(
                                       width: 24,
@@ -399,7 +393,7 @@ class _GroupCard extends StatelessWidget {
                       borderRadius: BorderRadius.circular(8),
                       child: _NetworkIcon(
                         url: item.image!,
-                        fit: BoxFit.cover,
+                        fit: BoxFit.contain,
                         placeholder: (context, url) => const Center(
                           child: SizedBox(
                             width: 24,
