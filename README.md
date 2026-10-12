@@ -1,5 +1,73 @@
 # FieldLog Mobile
 
-Flutter app for offline-first scientific field data collection, with submissions synced to FieldLog.
+Flutter app for offline-first scientific field data collection. It stores work on
+the device and syncs submissions to the FieldLog backend when connectivity is
+available.
 
-> This repository currently contains only this README. The app source will be migrated from the FieldLog monorepo in a later step.
+## Requirements
+
+- Flutter 3.38.7 (CI uses this version)
+- Android SDK for Android builds
+- Xcode on macOS for iOS builds
+- A reachable FieldLog API and PowerSync service
+
+The app source is now maintained in this repository. Backend services and their
+deployment remain in [field-log-poc](https://github.com/The-Field-Company/field-log-poc).
+
+## Configure and run
+
+Create a local config from the example and set URLs reachable from your device:
+
+```bash
+cp .env.json.example .env.json
+flutter pub get
+flutter run --dart-define-from-file=.env.json
+```
+
+`.env.json` is ignored by Git. Do not commit local environment configuration.
+In debug builds, the app's Settings screen can also override the service URLs.
+
+For a USB-connected Android device, enable USB debugging and run:
+
+```bash
+adb reverse tcp:8000 tcp:8000
+flutter run --dart-define-from-file=.env.json -d <device-id>
+```
+
+For the Android emulator, use `10.0.2.2` to reach services running on the host;
+the example config contains these defaults.
+
+## GitHub Actions
+
+Android branch builds and tagged releases use repository Actions secrets:
+
+- `SERVER_URL`
+- `POWERSYNC_URL`
+- `GLITCHTIP_DSN`
+- `KEYSTORE_BASE64`
+- `KEYSTORE_PASSWORD`
+
+These secrets do not transfer when source code is moved between GitHub
+repositories. Add them in this repository's **Settings → Secrets and variables
+→ Actions** before expecting the existing workflows to build successfully.
+The keystore must be the same signing key used for existing FieldLog Android
+installs so users can install updates over them.
+
+Push a `v*` tag to build and publish a signed APK release. Branch builds are
+available as Actions artifacts and expire after 30 days.
+
+## Local Android release build
+
+The release build needs `android/key.properties` and
+`android/fieldlog-release.jks`, which must not be committed. Configure the
+keystore and the three service values, then run:
+
+```bash
+flutter build apk --release --dart-define-from-file=.env.json
+```
+
+## F-Droid
+
+This repository is being prepared for F-Droid. F-Droid builds need a
+maintainer-supplied configuration and must be built from source; the GitHub
+release APK is signed with the project's release key.
