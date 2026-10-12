@@ -1,81 +1,73 @@
 # FieldLog Mobile
 
-Flutter app for scientific field data collection. Works offline-first via PowerSync, syncing submissions when connectivity is restored.
+Flutter app for offline-first scientific field data collection. It stores work on
+the device and syncs submissions to the FieldLog backend when connectivity is
+available.
 
-## Prerequisites
+## Requirements
 
-- Flutter 3.38+
-- Android SDK / Xcode (for iOS)
-- Backend running locally (`make up` from the project root)
+- Flutter 3.38.7 (CI uses this version)
+- Android SDK for Android builds
+- Xcode on macOS for iOS builds
+- A reachable FieldLog API and PowerSync service
 
-## Environment setup
+The app source is now maintained in this repository. Backend services and their
+deployment remain in [field-log-poc](https://github.com/The-Field-Company/field-log-poc).
 
-Copy the example env file and fill in your values:
+## Configure and run
+
+Create a local config from the example and set URLs reachable from your device:
 
 ```bash
 cp .env.json.example .env.json
-```
-
-`.env.json` is gitignored — never commit it.
-
-| Key | Description |
-|---|---|
-| `SERVER_URL` | FieldLog API base URL |
-| `POWERSYNC_URL` | PowerSync service URL |
-| `GLITCHTIP_DSN` | GlitchTip DSN for error tracking — obtain from GlitchTip after creating a project (`Projects → [project] → Project Settings → Client Keys (DSN)`) |
-
-## Running locally
-
-```bash
+flutter pub get
 flutter run --dart-define-from-file=.env.json
 ```
 
-> In debug builds, URLs can also be overridden at runtime via the **Settings screen** (gear icon on the entry screen). Changes there are saved on-device and persist across restarts.
+`.env.json` is ignored by Git. Do not commit local environment configuration.
+In debug builds, the app's Settings screen can also override the service URLs.
 
-## Running on an Android device (USB)
-
-1. Enable **USB debugging** on your device (Developer Options)
-2. Plug in via USB and confirm the prompt on the device
-3. Set up ADB reverse port forwarding so the device can reach your local backend:
+For a USB-connected Android device, enable USB debugging and run:
 
 ```bash
 adb reverse tcp:8000 tcp:8000
-```
-
-4. Run the app:
-
-```bash
 flutter run --dart-define-from-file=.env.json -d <device-id>
 ```
 
-To find your device ID: `flutter devices`
+For the Android emulator, use `10.0.2.2` to reach services running on the host;
+the example config contains these defaults.
 
-## Running on the Android emulator
+## GitHub Actions
 
-The emulator reaches your host machine via `10.0.2.2`. The defaults in `.env.json.example` are already set for this — just copy and run:
+Android branch builds and tagged releases use repository Actions secrets:
 
-```bash
-cp .env.json.example .env.json
-flutter run --dart-define-from-file=.env.json
-```
+- `SERVER_URL`
+- `POWERSYNC_URL`
+- `GLITCHTIP_DSN`
+- `KEYSTORE_BASE64`
+- `KEYSTORE_PASSWORD`
 
-## Releases
+These secrets do not transfer when source code is moved between GitHub
+repositories. Add them in this repository's **Settings → Secrets and variables
+→ Actions** before expecting the existing workflows to build successfully.
+The keystore must be the same signing key used for existing FieldLog Android
+installs so users can install updates over them.
 
-Production APKs are built and signed automatically by GitHub Actions.
+Push a `v*` tag to build and publish a signed APK release. Branch builds are
+available as Actions artifacts and expire after 30 days.
 
-**To ship a new release:**
-```bash
-git tag v1.x.x
-git push --tags
-```
-The signed APK appears on the [Releases page](https://github.com/The-Field-Company/field-log-poc/releases) within ~10 minutes.
+## Local Android release build
 
-**To build a test APK from any branch:**
+The release build needs `android/key.properties` and
+`android/fieldlog-release.jks`, which must not be committed. Configure the
+keystore and the three service values, then run:
 
-Push any change to `mobile/` — GitHub Actions builds an APK and uploads it as an artifact under the [Actions tab](https://github.com/The-Field-Company/field-log-poc/actions). Artifacts expire after 30 days.
-
-**To build locally:**
 ```bash
 flutter build apk --release --dart-define-from-file=.env.json
 ```
-Requires `android/key.properties` and `android/fieldlog-release.jks` — see the signing setup in `docs/deployment.md`.
+
+## F-Droid
+
+This repository is being prepared for F-Droid. F-Droid builds need a
+maintainer-supplied configuration and must be built from source; the GitHub
+release APK is signed with the project's release key.
