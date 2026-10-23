@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:fieldlog_mobile/app_typography.dart';
 import '../../theme/app_colors.dart';
 
 class TagboxFieldWidget extends StatefulWidget {
@@ -56,7 +56,7 @@ class _TagboxFieldWidgetState extends State<TagboxFieldWidget> {
       child: FormField<List<String>>(
         validator: widget.isRequired
             ? (value) =>
-                _selected.isEmpty ? '${widget.label} is required' : null
+                  _selected.isEmpty ? '${widget.label} is required' : null
             : null,
         builder: (state) {
           return Column(
@@ -64,7 +64,7 @@ class _TagboxFieldWidgetState extends State<TagboxFieldWidget> {
             children: [
               Text(
                 widget.label + (widget.isRequired ? ' *' : ''),
-                style: GoogleFonts.inter(
+                style: AppTypography.textStyle(
                   fontSize: 16,
                   color: AppColors.textSecondary,
                 ),
@@ -75,7 +75,9 @@ class _TagboxFieldWidgetState extends State<TagboxFieldWidget> {
                 child: Container(
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 10),
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
                   decoration: BoxDecoration(
                     border: Border.all(color: AppColors.borderColor),
                     borderRadius: BorderRadius.circular(6),
@@ -83,7 +85,7 @@ class _TagboxFieldWidgetState extends State<TagboxFieldWidget> {
                   child: _selected.isEmpty
                       ? Text(
                           'Tap to select...',
-                          style: GoogleFonts.inter(
+                          style: AppTypography.textStyle(
                             fontSize: 14,
                             color: AppColors.textTertiary,
                           ),
@@ -93,21 +95,25 @@ class _TagboxFieldWidgetState extends State<TagboxFieldWidget> {
                           runSpacing: 6,
                           children: _selected.map((val) {
                             final label = widget.options
-                                .firstWhere((o) => o.key == val,
-                                    orElse: () => MapEntry(val, val))
+                                .firstWhere(
+                                  (o) => o.key == val,
+                                  orElse: () => MapEntry(val, val),
+                                )
                                 .value;
                             return Chip(
-                              label: Text(label,
-                                  style: GoogleFonts.inter(fontSize: 13)),
-                              deleteIcon:
-                                  const Icon(Icons.close, size: 16),
+                              label: Text(
+                                label,
+                                style: AppTypography.textStyle(fontSize: 13),
+                              ),
+                              deleteIcon: const Icon(Icons.close, size: 16),
                               onDeleted: () {
                                 setState(() => _selected.remove(val));
                                 state.didChange(_selected.toList());
                                 widget.onChanged(_selected.toList());
                               },
-                              backgroundColor: AppColors.accent
-                                  .withValues(alpha: 0.08),
+                              backgroundColor: AppColors.accent.withValues(
+                                alpha: 0.08,
+                              ),
                               side: BorderSide.none,
                               materialTapTargetSize:
                                   MaterialTapTargetSize.shrinkWrap,
@@ -121,8 +127,10 @@ class _TagboxFieldWidgetState extends State<TagboxFieldWidget> {
                   padding: const EdgeInsets.only(top: 4),
                   child: Text(
                     state.errorText!,
-                    style: GoogleFonts.inter(
-                        fontSize: 12, color: AppColors.error),
+                    style: AppTypography.textStyle(
+                      fontSize: 12,
+                      color: AppColors.error,
+                    ),
                   ),
                 ),
             ],
@@ -182,8 +190,7 @@ class _TagboxSheetState extends State<_TagboxSheet> {
                         hintText: 'Search...',
                         prefixIcon: Icon(Icons.search, size: 20),
                         isDense: true,
-                        contentPadding:
-                            EdgeInsets.symmetric(vertical: 8),
+                        contentPadding: EdgeInsets.symmetric(vertical: 8),
                       ),
                       onChanged: (v) => setState(() => _search = v),
                     ),
@@ -196,7 +203,7 @@ class _TagboxSheetState extends State<_TagboxSheet> {
                     },
                     child: Text(
                       'Done',
-                      style: GoogleFonts.inter(
+                      style: AppTypography.textStyle(
                         fontWeight: FontWeight.w600,
                         color: AppColors.accent,
                       ),
@@ -213,8 +220,10 @@ class _TagboxSheetState extends State<_TagboxSheet> {
                   final option = filtered[i];
                   final checked = _selected.contains(option.key);
                   return CheckboxListTile(
-                    title: Text(option.value,
-                        style: GoogleFonts.inter(fontSize: 15)),
+                    title: Text(
+                      option.value,
+                      style: AppTypography.textStyle(fontSize: 15),
+                    ),
                     value: checked,
                     activeColor: AppColors.accent,
                     dense: true,

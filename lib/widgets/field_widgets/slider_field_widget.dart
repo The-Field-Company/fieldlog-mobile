@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:fieldlog_mobile/app_typography.dart';
 import '../../theme/app_colors.dart';
 
 class FieldSlider extends StatefulWidget {
@@ -45,17 +45,19 @@ class _FieldSliderState extends State<FieldSlider> {
             children: [
               Text(
                 widget.label,
-                style: GoogleFonts.inter(
+                style: AppTypography.textStyle(
                   fontSize: 16,
                   color: AppColors.textSecondary,
                 ),
               ),
               Text(
                 _value.toStringAsFixed(
-                    widget.step is int || widget.step == widget.step.roundToDouble()
-                        ? 0
-                        : 1),
-                style: GoogleFonts.inter(
+                  widget.step is int ||
+                          widget.step == widget.step.roundToDouble()
+                      ? 0
+                      : 1,
+                ),
+                style: AppTypography.textStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w500,
                   color: AppColors.textPrimary,
@@ -80,12 +82,20 @@ class _FieldSliderState extends State<FieldSlider> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('${widget.min}',
-                  style: GoogleFonts.inter(
-                      fontSize: 12, color: AppColors.textTertiary)),
-              Text('${widget.max}',
-                  style: GoogleFonts.inter(
-                      fontSize: 12, color: AppColors.textTertiary)),
+              Text(
+                '${widget.min}',
+                style: AppTypography.textStyle(
+                  fontSize: 12,
+                  color: AppColors.textTertiary,
+                ),
+              ),
+              Text(
+                '${widget.max}',
+                style: AppTypography.textStyle(
+                  fontSize: 12,
+                  color: AppColors.textTertiary,
+                ),
+              ),
             ],
           ),
         ],

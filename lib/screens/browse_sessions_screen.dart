@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:fieldlog_mobile/app_typography.dart';
 import '../theme/app_colors.dart';
 import '../models/session.dart';
 import '../services/api_service.dart';
@@ -58,7 +58,11 @@ class _BrowseSessionsScreenState extends State<BrowseSessionsScreen> {
       final subscribedIds = await _fetchSubscribedIds();
       if (!mounted) return;
       if (_highlightSessionId != null) {
-        sessions.sort((a, b) => a.id == _highlightSessionId ? -1 : (b.id == _highlightSessionId ? 1 : 0));
+        sessions.sort(
+          (a, b) => a.id == _highlightSessionId
+              ? -1
+              : (b.id == _highlightSessionId ? 1 : 0),
+        );
       }
       setState(() {
         _sessions = sessions;
@@ -154,14 +158,12 @@ class _BrowseSessionsScreenState extends State<BrowseSessionsScreen> {
         [session.id.toString()],
       );
       // Remove from both caches for immediate display update.
-      await db.execute(
-        'DELETE FROM local_sessions WHERE id = ?',
-        [session.id.toString()],
-      );
-      await db.execute(
-        'DELETE FROM fieldlog_session WHERE id = ?',
-        [session.id.toString()],
-      );
+      await db.execute('DELETE FROM local_sessions WHERE id = ?', [
+        session.id.toString(),
+      ]);
+      await db.execute('DELETE FROM fieldlog_session WHERE id = ?', [
+        session.id.toString(),
+      ]);
 
       if (!mounted) return;
       setState(() => _subscribedIds.remove(session.id));
@@ -174,9 +176,9 @@ class _BrowseSessionsScreenState extends State<BrowseSessionsScreen> {
   }
 
   void _showError(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -185,7 +187,7 @@ class _BrowseSessionsScreenState extends State<BrowseSessionsScreen> {
       appBar: AppBar(
         title: Text(
           'Browse Sessions',
-          style: GoogleFonts.inter(
+          style: AppTypography.textStyle(
             fontSize: 17,
             fontWeight: FontWeight.w600,
             color: AppColors.textPrimary,
@@ -210,16 +212,18 @@ class _BrowseSessionsScreenState extends State<BrowseSessionsScreen> {
             Container(
               width: double.infinity,
               color: Colors.orange.shade50,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               child: Row(
                 children: [
-                  Icon(Icons.cloud_off_outlined,
-                      size: 16, color: Colors.orange.shade700),
+                  Icon(
+                    Icons.cloud_off_outlined,
+                    size: 16,
+                    color: Colors.orange.shade700,
+                  ),
                   const SizedBox(width: 8),
                   Text(
                     'You\'re offline. Showing cached data.',
-                    style: GoogleFonts.inter(
+                    style: AppTypography.textStyle(
                       fontSize: 13,
                       color: Colors.orange.shade700,
                     ),
@@ -248,11 +252,15 @@ class _BrowseSessionsScreenState extends State<BrowseSessionsScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.error_outline, size: 40, color: AppColors.textTertiary),
+              Icon(
+                Icons.error_outline,
+                size: 40,
+                color: AppColors.textTertiary,
+              ),
               const SizedBox(height: 12),
               Text(
                 _error!,
-                style: GoogleFonts.inter(
+                style: AppTypography.textStyle(
                   fontSize: 14,
                   color: AppColors.textSecondary,
                 ),
@@ -275,7 +283,7 @@ class _BrowseSessionsScreenState extends State<BrowseSessionsScreen> {
           padding: const EdgeInsets.all(32),
           child: Text(
             'No public sessions available.',
-            style: GoogleFonts.inter(
+            style: AppTypography.textStyle(
               fontSize: 14,
               color: AppColors.textSecondary,
             ),
@@ -302,7 +310,9 @@ class _BrowseSessionsScreenState extends State<BrowseSessionsScreen> {
               width: isHighlighted ? 2 : 1,
             ),
             borderRadius: BorderRadius.circular(8),
-            color: isHighlighted ? AppColors.accent.withValues(alpha: 0.04) : null,
+            color: isHighlighted
+                ? AppColors.accent.withValues(alpha: 0.04)
+                : null,
           ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -313,7 +323,7 @@ class _BrowseSessionsScreenState extends State<BrowseSessionsScreen> {
                   children: [
                     Text(
                       session.name,
-                      style: GoogleFonts.inter(
+                      style: AppTypography.textStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w600,
                         color: AppColors.textPrimary,
@@ -323,7 +333,7 @@ class _BrowseSessionsScreenState extends State<BrowseSessionsScreen> {
                       const SizedBox(height: 4),
                       Text(
                         session.description,
-                        style: GoogleFonts.inter(
+                        style: AppTypography.textStyle(
                           fontSize: 13,
                           color: AppColors.textSecondary,
                         ),
@@ -349,39 +359,42 @@ class _BrowseSessionsScreenState extends State<BrowseSessionsScreen> {
                         ),
                       )
                     : isSubscribed
-                        ? OutlinedButton(
-                            onPressed: () => _unsubscribe(session),
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: AppColors.textSecondary,
-                              side: const BorderSide(
-                                  color: AppColors.borderColor),
-                              padding: const EdgeInsets.symmetric(
-                                  vertical: 8, horizontal: 12),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                            ),
-                            child: Text(
-                              'Joined',
-                              style: GoogleFonts.inter(fontSize: 13),
-                            ),
-                          )
-                        : ElevatedButton(
-                            onPressed: () => _subscribe(session),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AppColors.accent,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(
-                                  vertical: 8, horizontal: 12),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                            ),
-                            child: Text(
-                              'Join',
-                              style: GoogleFonts.inter(fontSize: 13),
-                            ),
+                    ? OutlinedButton(
+                        onPressed: () => _unsubscribe(session),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.textSecondary,
+                          side: const BorderSide(color: AppColors.borderColor),
+                          padding: const EdgeInsets.symmetric(
+                            vertical: 8,
+                            horizontal: 12,
                           ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                        ),
+                        child: Text(
+                          'Joined',
+                          style: AppTypography.textStyle(fontSize: 13),
+                        ),
+                      )
+                    : ElevatedButton(
+                        onPressed: () => _subscribe(session),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.accent,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(
+                            vertical: 8,
+                            horizontal: 12,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                        ),
+                        child: Text(
+                          'Join',
+                          style: AppTypography.textStyle(fontSize: 13),
+                        ),
+                      ),
               ),
             ],
           ),

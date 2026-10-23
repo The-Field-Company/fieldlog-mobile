@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:fieldlog_mobile/app_typography.dart';
 import '../theme/app_colors.dart';
 import '../models/session.dart';
 import '../widgets/sync_status_widget.dart';
@@ -26,16 +26,12 @@ class SuccessScreen extends StatelessWidget {
                     color: AppColors.accent,
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(
-                    Icons.check,
-                    color: Colors.white,
-                    size: 40,
-                  ),
+                  child: const Icon(Icons.check, color: Colors.white, size: 40),
                 ),
                 const SizedBox(height: 24),
                 Text(
                   'Submission saved',
-                  style: GoogleFonts.inter(
+                  style: AppTypography.textStyle(
                     fontSize: 24,
                     fontWeight: FontWeight.w600,
                     color: AppColors.textPrimary,
@@ -44,7 +40,7 @@ class SuccessScreen extends StatelessWidget {
                 const SizedBox(height: 8),
                 Text(
                   'Your observation has been recorded.',
-                  style: GoogleFonts.inter(
+                  style: AppTypography.textStyle(
                     fontSize: 16,
                     color: AppColors.textSecondary,
                   ),
@@ -80,7 +76,9 @@ class SuccessScreen extends StatelessWidget {
                       foregroundColor: AppColors.accent,
                       side: const BorderSide(color: AppColors.accent),
                       padding: const EdgeInsets.symmetric(
-                          vertical: 14, horizontal: 32),
+                        vertical: 14,
+                        horizontal: 32,
+                      ),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(6),
                       ),

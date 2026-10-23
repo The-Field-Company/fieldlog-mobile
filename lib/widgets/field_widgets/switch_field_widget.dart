@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:fieldlog_mobile/app_typography.dart';
 import '../../theme/app_colors.dart';
 
 class FieldSwitch extends StatefulWidget {
@@ -44,7 +44,7 @@ class _FieldSwitchState extends State<FieldSwitch> {
       child: SwitchListTile(
         title: Text(
           widget.label,
-          style: GoogleFonts.inter(
+          style: AppTypography.textStyle(
             fontSize: 15,
             color: AppColors.textPrimary,
           ),
@@ -52,7 +52,7 @@ class _FieldSwitchState extends State<FieldSwitch> {
         subtitle: hasCustomLabels
             ? Text(
                 subtitle,
-                style: GoogleFonts.inter(
+                style: AppTypography.textStyle(
                   fontSize: 13,
                   color: AppColors.textSecondary,
                 ),

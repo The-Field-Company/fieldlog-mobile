@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:fieldlog_mobile/app_typography.dart';
 import '../../theme/app_colors.dart';
 
 class RankingFieldWidget extends StatefulWidget {
@@ -62,7 +62,7 @@ class _RankingFieldWidgetState extends State<RankingFieldWidget> {
         children: [
           Text(
             widget.label,
-            style: GoogleFonts.inter(
+            style: AppTypography.textStyle(
               fontSize: 16,
               color: AppColors.textSecondary,
             ),
@@ -94,7 +94,7 @@ class _RankingFieldWidgetState extends State<RankingFieldWidget> {
                     ),
                     child: Text(
                       '${index + 1}',
-                      style: GoogleFonts.inter(
+                      style: AppTypography.textStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
                         color: AppColors.accent,
@@ -103,7 +103,7 @@ class _RankingFieldWidgetState extends State<RankingFieldWidget> {
                   ),
                   title: Text(
                     item.value,
-                    style: GoogleFonts.inter(
+                    style: AppTypography.textStyle(
                       fontSize: 15,
                       color: AppColors.textPrimary,
                     ),
@@ -116,8 +116,7 @@ class _RankingFieldWidgetState extends State<RankingFieldWidget> {
                     ),
                   ),
                   dense: true,
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 12),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12),
                 ),
               );
             },

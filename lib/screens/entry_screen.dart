@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:fieldlog_mobile/app_typography.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 import '../theme/app_colors.dart';
 import '../models/session.dart';
@@ -60,11 +60,11 @@ class _EntryScreenState extends State<EntryScreen> {
           ' ORDER BY name ASC',
         )
         .listen((rows) {
-      if (!mounted) return;
-      setState(() {
-        _subscriptions = rows.map((row) => Session.fromRow(row)).toList();
-      });
-    });
+          if (!mounted) return;
+          setState(() {
+            _subscriptions = rows.map((row) => Session.fromRow(row)).toList();
+          });
+        });
   }
 
   Future<void> _logout() async {
@@ -105,7 +105,7 @@ class _EntryScreenState extends State<EntryScreen> {
                       padding: const EdgeInsets.only(left: 8),
                       child: Text(
                         _username!,
-                        style: GoogleFonts.inter(
+                        style: AppTypography.textStyle(
                           fontSize: 12,
                           color: AppColors.textTertiary,
                         ),
@@ -115,14 +115,18 @@ class _EntryScreenState extends State<EntryScreen> {
                   const SyncStatusWidget(),
                   if (_isOnline)
                     IconButton(
-                      icon: const Icon(Icons.explore_outlined,
-                          color: AppColors.accent),
+                      icon: const Icon(
+                        Icons.explore_outlined,
+                        color: AppColors.accent,
+                      ),
                       onPressed: () => Navigator.pushNamed(context, '/browse'),
                       tooltip: 'Browse sessions',
                     ),
                   IconButton(
-                    icon: const Icon(Icons.logout_outlined,
-                        color: AppColors.textTertiary),
+                    icon: const Icon(
+                      Icons.logout_outlined,
+                      color: AppColors.textTertiary,
+                    ),
                     onPressed: _logout,
                     tooltip: 'Sign out',
                   ),
@@ -138,14 +142,12 @@ class _EntryScreenState extends State<EntryScreen> {
                   const SizedBox(height: 24),
 
                   // Logo
-                  Center(
-                    child: Image.asset('assets/logo.png', height: 100),
-                  ),
+                  Center(child: Image.asset('assets/logo.png', height: 100)),
                   const SizedBox(height: 8),
                   Center(
                     child: Text(
                       'Scientific Field Data Collection',
-                      style: GoogleFonts.inter(
+                      style: AppTypography.textStyle(
                         fontSize: 14,
                         color: AppColors.textTertiary,
                       ),
@@ -169,7 +171,9 @@ class _EntryScreenState extends State<EntryScreen> {
                           foregroundColor: AppColors.accent,
                           side: const BorderSide(color: AppColors.accent),
                           padding: const EdgeInsets.symmetric(
-                              vertical: 14, horizontal: 16),
+                            vertical: 14,
+                            horizontal: 16,
+                          ),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(6),
                           ),
@@ -182,7 +186,7 @@ class _EntryScreenState extends State<EntryScreen> {
                             Expanded(
                               child: Text(
                                 'Continue: ${_cachedSession!.name}',
-                                style: GoogleFonts.inter(
+                                style: AppTypography.textStyle(
                                   fontSize: 14,
                                   fontWeight: FontWeight.w500,
                                 ),
@@ -199,7 +203,7 @@ class _EntryScreenState extends State<EntryScreen> {
                   // Section header
                   Text(
                     'Sessions',
-                    style: GoogleFonts.inter(
+                    style: AppTypography.textStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
                       color: AppColors.textSecondary,
@@ -222,7 +226,7 @@ class _EntryScreenState extends State<EntryScreen> {
                           const SizedBox(height: 12),
                           Text(
                             'No sessions yet.',
-                            style: GoogleFonts.inter(
+                            style: AppTypography.textStyle(
                               fontSize: 15,
                               fontWeight: FontWeight.w500,
                               color: AppColors.textSecondary,
@@ -233,7 +237,7 @@ class _EntryScreenState extends State<EntryScreen> {
                             _isOnline
                                 ? 'Tap Browse to find and join a session.'
                                 : 'Go online to browse and join sessions.',
-                            style: GoogleFonts.inter(
+                            style: AppTypography.textStyle(
                               fontSize: 13,
                               color: AppColors.textTertiary,
                             ),
@@ -243,15 +247,17 @@ class _EntryScreenState extends State<EntryScreen> {
                       ),
                     )
                   else
-                    ..._subscriptions.map((session) => _SessionCard(
-                          session: session,
-                          onTap: () async {
-                            final nav = Navigator.of(context);
-                            await PreferencesService.cacheSession(session);
-                            if (!mounted) return;
-                            nav.pushNamed('/form', arguments: session);
-                          },
-                        )),
+                    ..._subscriptions.map(
+                      (session) => _SessionCard(
+                        session: session,
+                        onTap: () async {
+                          final nav = Navigator.of(context);
+                          await PreferencesService.cacheSession(session);
+                          if (!mounted) return;
+                          nav.pushNamed('/form', arguments: session);
+                        },
+                      ),
+                    ),
 
                   const SizedBox(height: 32),
                 ],
@@ -291,7 +297,7 @@ class _SessionCard extends StatelessWidget {
                   children: [
                     Text(
                       session.name,
-                      style: GoogleFonts.inter(
+                      style: AppTypography.textStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w600,
                         color: AppColors.textPrimary,
@@ -301,7 +307,7 @@ class _SessionCard extends StatelessWidget {
                       const SizedBox(height: 4),
                       Text(
                         session.description,
-                        style: GoogleFonts.inter(
+                        style: AppTypography.textStyle(
                           fontSize: 13,
                           color: AppColors.textSecondary,
                         ),
@@ -312,10 +318,7 @@ class _SessionCard extends StatelessWidget {
                   ],
                 ),
               ),
-              const Icon(
-                Icons.chevron_right,
-                color: AppColors.textTertiary,
-              ),
+              const Icon(Icons.chevron_right, color: AppColors.textTertiary),
             ],
           ),
         ),

@@ -1,0 +1,7 @@
+FieldLog is an offline-first app for collecting field data with forms and surveys.
+
+Open available sessions, record field observations, and continue working when offline. Your work is stored on the device and syncs with the FieldLog service when a connection is available.
+
+A FieldLog account and the service configured for this build are required. The service endpoint is fixed by the build; users cannot select another server. Location access is requested only when a session uses location capture.
+
+In builds that configure diagnostics, sharing is opt-in and off by default.

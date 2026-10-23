@@ -68,6 +68,26 @@ flutter build apk --release --dart-define-from-file=.env.json
 
 ## F-Droid
 
-This repository is being prepared for F-Droid. F-Droid builds need a
-maintainer-supplied configuration and must be built from source; the GitHub
-release APK is signed with the project's release key.
+F-Droid builds must be built from a public source tag. Their build metadata is
+maintained in the separate `fdroiddata` repository and must supply the fixed
+FieldLog API and PowerSync URLs as build-time values. These URLs are public
+configuration compiled into the app; GitHub Actions secrets are not available
+to F-Droid builds. Do not pass `GLITCHTIP_DSN` in the F-Droid build.
+
+The F-Droid build produces an unsigned APK for F-Droid to sign:
+
+```bash
+# Replace these examples with the fixed production endpoints.
+SERVER_URL='https://api.example.org'
+POWERSYNC_URL='https://sync.example.org'
+
+flutter build apk --release \
+  --android-project-arg=fdroid=true \
+  --dart-define="SERVER_URL=$SERVER_URL" \
+  --dart-define="POWERSYNC_URL=$POWERSYNC_URL"
+```
+
+The GitHub release workflow continues to sign its APK with the project's
+release key. F-Droid signs its APK with its own key, so an installation from
+one channel cannot be updated directly by the other channel unless upstream
+signature reproducibility is configured.

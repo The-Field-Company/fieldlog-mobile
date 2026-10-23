@@ -1,8 +1,9 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:fieldlog_mobile/app_typography.dart';
 import '../theme/app_colors.dart';
 import '../services/preferences_service.dart';
+import '../services/telemetry_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -15,6 +16,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _serverController = TextEditingController();
   final _powerSyncController = TextEditingController();
   bool _saved = false;
+  bool _telemetryEnabled = TelemetryService.isEnabled;
 
   @override
   void initState() {
@@ -34,7 +36,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   String _cleanUrl(String url) {
     final trimmed = url.trim();
-    return trimmed.endsWith('/') ? trimmed.substring(0, trimmed.length - 1) : trimmed;
+    return trimmed.endsWith('/')
+        ? trimmed.substring(0, trimmed.length - 1)
+        : trimmed;
   }
 
   Future<void> _save() async {
@@ -51,6 +55,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
   }
 
+  Future<void> _setTelemetryEnabled(bool enabled) async {
+    setState(() => _telemetryEnabled = enabled);
+    try {
+      await TelemetryService.setEnabled(enabled);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _telemetryEnabled = TelemetryService.isEnabled);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not save the diagnostics setting.'),
+        ),
+      );
+    }
+  }
+
   @override
   void dispose() {
     _serverController.dispose();
@@ -62,9 +81,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
-      body: Padding(
-        padding: const EdgeInsets.all(24),
-        child: kDebugMode ? _buildEditableSettings() : _buildLockedSettings(),
+      body: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              kDebugMode ? _buildEditableSettings() : _buildLockedSettings(),
+              const SizedBox(height: 32),
+              _buildDiagnosticsSettings(),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -72,12 +100,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// Editable URL form — only shown in debug builds.
   Widget _buildEditableSettings() {
     return Column(
+      mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // Server URL
         Text(
           'SERVER URL',
-          style: GoogleFonts.inter(
+          style: AppTypography.textStyle(
             fontSize: 12,
             fontWeight: FontWeight.w600,
             color: AppColors.textTertiary,
@@ -89,7 +118,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           controller: _serverController,
           keyboardType: TextInputType.url,
           autocorrect: false,
-          style: GoogleFonts.inter(
+          style: AppTypography.textStyle(
             fontSize: 16,
             color: AppColors.textPrimary,
           ),
@@ -100,7 +129,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         const SizedBox(height: 8),
         Text(
           'Set SERVER_URL in your .env.json to configure the default.',
-          style: GoogleFonts.inter(
+          style: AppTypography.textStyle(
             fontSize: 13,
             color: AppColors.textTertiary,
           ),
@@ -110,7 +139,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         // PowerSync URL
         Text(
           'POWERSYNC URL',
-          style: GoogleFonts.inter(
+          style: AppTypography.textStyle(
             fontSize: 12,
             fontWeight: FontWeight.w600,
             color: AppColors.textTertiary,
@@ -122,7 +151,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           controller: _powerSyncController,
           keyboardType: TextInputType.url,
           autocorrect: false,
-          style: GoogleFonts.inter(
+          style: AppTypography.textStyle(
             fontSize: 16,
             color: AppColors.textPrimary,
           ),
@@ -133,7 +162,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         const SizedBox(height: 8),
         Text(
           'PowerSync service URL. Default port is 8080.',
-          style: GoogleFonts.inter(
+          style: AppTypography.textStyle(
             fontSize: 13,
             color: AppColors.textTertiary,
           ),
@@ -156,6 +185,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// URLs are compiled in at build time and cannot be changed by users.
   Widget _buildLockedSettings() {
     return Column(
+      mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Container(
@@ -168,7 +198,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           child: Text(
             'Server configuration is managed by your administrator and cannot be changed on this device.',
-            style: GoogleFonts.inter(
+            style: AppTypography.textStyle(
               fontSize: 13,
               color: AppColors.textTertiary,
             ),
@@ -178,7 +208,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
         Text(
           'SERVER URL',
-          style: GoogleFonts.inter(
+          style: AppTypography.textStyle(
             fontSize: 12,
             fontWeight: FontWeight.w600,
             color: AppColors.textTertiary,
@@ -188,7 +218,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         const SizedBox(height: 8),
         Text(
           _serverController.text.isNotEmpty ? _serverController.text : '—',
-          style: GoogleFonts.inter(
+          style: AppTypography.textStyle(
             fontSize: 16,
             color: AppColors.textPrimary,
           ),
@@ -197,7 +227,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
         Text(
           'POWERSYNC URL',
-          style: GoogleFonts.inter(
+          style: AppTypography.textStyle(
             fontSize: 12,
             fontWeight: FontWeight.w600,
             color: AppColors.textTertiary,
@@ -206,11 +236,55 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         const SizedBox(height: 8),
         Text(
-          _powerSyncController.text.isNotEmpty ? _powerSyncController.text : '—',
-          style: GoogleFonts.inter(
+          _powerSyncController.text.isNotEmpty
+              ? _powerSyncController.text
+              : '—',
+          style: AppTypography.textStyle(
             fontSize: 16,
             color: AppColors.textPrimary,
           ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDiagnosticsSettings() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'PRIVACY',
+          style: AppTypography.textStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: AppColors.textTertiary,
+            letterSpacing: 0.8,
+          ),
+        ),
+        const SizedBox(height: 8),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(
+            'Share diagnostics',
+            style: AppTypography.textStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w500,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          subtitle: Text(
+            TelemetryService.isConfigured
+                ? 'Opt in to send app error reports and performance traces to the diagnostics service configured for this build. Off by default.'
+                : 'Diagnostics are not configured in this build.',
+            style: AppTypography.textStyle(
+              fontSize: 13,
+              color: AppColors.textTertiary,
+            ),
+          ),
+          value: TelemetryService.isConfigured && _telemetryEnabled,
+          onChanged: TelemetryService.isConfigured
+              ? _setTelemetryEnabled
+              : null,
         ),
       ],
     );

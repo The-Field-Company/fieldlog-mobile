@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:fieldlog_mobile/app_typography.dart';
 import '../../theme/app_colors.dart';
 
 class FieldRating extends StatefulWidget {
@@ -38,7 +38,9 @@ class _FieldRatingState extends State<FieldRating> {
   IconData _iconFor(int index, bool filled) {
     switch (widget.rateType) {
       case 'smileys':
-        return filled ? Icons.sentiment_satisfied : Icons.sentiment_satisfied_outlined;
+        return filled
+            ? Icons.sentiment_satisfied
+            : Icons.sentiment_satisfied_outlined;
       default: // 'stars' or null
         return filled ? Icons.star : Icons.star_border;
     }
@@ -56,8 +58,7 @@ class _FieldRatingState extends State<FieldRating> {
       padding: const EdgeInsets.only(bottom: 20),
       child: FormField<int>(
         validator: widget.isRequired
-            ? (value) =>
-                _value == 0 ? '${widget.label} is required' : null
+            ? (value) => _value == 0 ? '${widget.label} is required' : null
             : null,
         builder: (state) {
           return Column(
@@ -65,7 +66,7 @@ class _FieldRatingState extends State<FieldRating> {
             children: [
               Text(
                 widget.label + (widget.isRequired ? ' *' : ''),
-                style: GoogleFonts.inter(
+                style: AppTypography.textStyle(
                   fontSize: 16,
                   color: AppColors.textSecondary,
                 ),
@@ -99,8 +100,10 @@ class _FieldRatingState extends State<FieldRating> {
                   padding: const EdgeInsets.only(top: 4),
                   child: Text(
                     state.errorText!,
-                    style: GoogleFonts.inter(
-                        fontSize: 12, color: AppColors.error),
+                    style: AppTypography.textStyle(
+                      fontSize: 12,
+                      color: AppColors.error,
+                    ),
                   ),
                 ),
             ],
@@ -115,8 +118,7 @@ class _FieldRatingState extends State<FieldRating> {
       padding: const EdgeInsets.only(bottom: 20),
       child: FormField<int>(
         validator: widget.isRequired
-            ? (value) =>
-                _value == 0 ? '${widget.label} is required' : null
+            ? (value) => _value == 0 ? '${widget.label} is required' : null
             : null,
         builder: (state) {
           return Column(
@@ -124,7 +126,7 @@ class _FieldRatingState extends State<FieldRating> {
             children: [
               Text(
                 widget.label + (widget.isRequired ? ' *' : ''),
-                style: GoogleFonts.inter(
+                style: AppTypography.textStyle(
                   fontSize: 16,
                   color: AppColors.textSecondary,
                 ),
@@ -146,9 +148,7 @@ class _FieldRatingState extends State<FieldRating> {
                       width: 40,
                       height: 40,
                       decoration: BoxDecoration(
-                        color: selected
-                            ? AppColors.accent
-                            : Colors.transparent,
+                        color: selected ? AppColors.accent : Colors.transparent,
                         border: Border.all(
                           color: selected
                               ? AppColors.accent
@@ -159,7 +159,7 @@ class _FieldRatingState extends State<FieldRating> {
                       alignment: Alignment.center,
                       child: Text(
                         '$ratingValue',
-                        style: GoogleFonts.inter(
+                        style: AppTypography.textStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w500,
                           color: selected
@@ -176,8 +176,10 @@ class _FieldRatingState extends State<FieldRating> {
                   padding: const EdgeInsets.only(top: 4),
                   child: Text(
                     state.errorText!,
-                    style: GoogleFonts.inter(
-                        fontSize: 12, color: AppColors.error),
+                    style: AppTypography.textStyle(
+                      fontSize: 12,
+                      color: AppColors.error,
+                    ),
                   ),
                 ),
             ],

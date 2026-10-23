@@ -1,8 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:geolocator/geolocator.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:fieldlog_mobile/app_typography.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:uuid/uuid.dart';
 import '../models/session.dart';
@@ -82,7 +81,8 @@ class _FormScreenState extends State<FormScreen> {
       await Sentry.captureException(
         e,
         stackTrace: stackTrace,
-        withScope: (scope) => scope.setTag('session_id', _session.id.toString()),
+        withScope: (scope) =>
+            scope.setTag('session_id', _session.id.toString()),
       );
       if (mounted) setState(() => _tallyCountsLoaded = true);
     }
@@ -96,7 +96,8 @@ class _FormScreenState extends State<FormScreen> {
       setState(() => _session = fresh);
     } catch (e) {
       // Offline or server error — keep using the cached session
-      if (kDebugMode) debugPrint('[FormScreen] Session refresh failed, using cache: $e');
+      if (kDebugMode)
+        debugPrint('[FormScreen] Session refresh failed, using cache: $e');
     }
   }
 
@@ -223,23 +224,20 @@ class _FormScreenState extends State<FormScreen> {
       await Sentry.captureException(
         e,
         stackTrace: stackTrace,
-        withScope: (scope) => scope.setTag('session_id', _session.id.toString()),
+        withScope: (scope) =>
+            scope.setTag('session_id', _session.id.toString()),
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to save: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to save: $e')));
       return;
     } finally {
       await transaction.finish();
     }
 
     if (!mounted) return;
-    Navigator.pushReplacementNamed(
-      context,
-      '/success',
-      arguments: _session,
-    );
+    Navigator.pushReplacementNamed(context, '/success', arguments: _session);
   }
 
   Future<void> _submitTally(Map<String, dynamic> data) async {
@@ -258,7 +256,8 @@ class _FormScreenState extends State<FormScreen> {
       await Sentry.captureException(
         e,
         stackTrace: stackTrace,
-        withScope: (scope) => scope.setTag('session_id', _session.id.toString()),
+        withScope: (scope) =>
+            scope.setTag('session_id', _session.id.toString()),
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -342,7 +341,7 @@ class _FormScreenState extends State<FormScreen> {
             const SizedBox(width: 8),
             Text(
               'Acquiring location...',
-              style: GoogleFonts.inter(
+              style: AppTypography.textStyle(
                 fontSize: 12,
                 color: AppColors.textTertiary,
               ),
@@ -369,9 +368,7 @@ class _FormScreenState extends State<FormScreen> {
       padding: EdgeInsets.fromLTRB(16, 12, hasSettingsAction ? 8 : 16, 12),
       decoration: BoxDecoration(
         color: Colors.orange.shade50,
-        border: Border(
-          bottom: BorderSide(color: Colors.orange.shade200),
-        ),
+        border: Border(bottom: BorderSide(color: Colors.orange.shade200)),
       ),
       child: Row(
         children: [
@@ -384,7 +381,7 @@ class _FormScreenState extends State<FormScreen> {
           Expanded(
             child: Text(
               _locationStatus,
-              style: GoogleFonts.inter(
+              style: AppTypography.textStyle(
                 fontSize: 13,
                 color: AppColors.textPrimary,
               ),
@@ -394,21 +391,20 @@ class _FormScreenState extends State<FormScreen> {
             TextButton(
               onPressed: () async {
                 if (isServiceDisabled) {
-                  await Geolocator.openLocationSettings();
+                  await LocationService.openLocationSettings();
                 } else {
-                  await Geolocator.openAppSettings();
+                  await LocationService.openAppSettings();
                 }
               },
               style: TextButton.styleFrom(
                 foregroundColor: AppColors.accent,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 minimumSize: Size.zero,
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
               child: Text(
                 'Open Settings',
-                style: GoogleFonts.inter(
+                style: AppTypography.textStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w500,
                   color: AppColors.accent,

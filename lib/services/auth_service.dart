@@ -69,12 +69,7 @@ class AuthService {
 
     scheduleRefresh();
 
-    final loggedInUser = await getUsernameAsync();
-    if (loggedInUser != null) {
-      await Sentry.configureScope(
-        (scope) => scope.setUser(SentryUser(username: loggedInUser)),
-      );
-    }
+    await getUsernameAsync();
   }
 
   static Future<void> logout() async {
@@ -85,7 +80,6 @@ class AuthService {
     await _storage.delete(key: _accessTokenKey);
     await _storage.delete(key: _refreshTokenKey);
 
-    await Sentry.configureScope((scope) => scope.setUser(null));
   }
 
   static Future<String?> getToken() async {
@@ -256,11 +250,6 @@ class AuthService {
     await getUsernameAsync();
     scheduleRefresh();
 
-    if (_cachedUsername != null) {
-      await Sentry.configureScope(
-        (scope) => scope.setUser(SentryUser(username: _cachedUsername)),
-      );
-    }
     return true;
   }
 }

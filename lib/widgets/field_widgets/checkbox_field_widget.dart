@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:fieldlog_mobile/app_typography.dart';
 import '../../theme/app_colors.dart';
 
 class FieldCheckbox extends StatefulWidget {
@@ -34,7 +34,7 @@ class _FieldCheckboxState extends State<FieldCheckbox> {
       child: CheckboxListTile(
         title: Text(
           widget.label,
-          style: GoogleFonts.inter(
+          style: AppTypography.textStyle(
             fontSize: 15,
             color: AppColors.textPrimary,
           ),
@@ -89,7 +89,7 @@ class _FieldMultiCheckboxState extends State<FieldMultiCheckbox> {
         initialValue: _selected.toList(),
         validator: widget.isRequired
             ? (value) =>
-                _selected.isEmpty ? '${widget.label} is required' : null
+                  _selected.isEmpty ? '${widget.label} is required' : null
             : null,
         builder: (state) {
           return Column(
@@ -97,7 +97,7 @@ class _FieldMultiCheckboxState extends State<FieldMultiCheckbox> {
             children: [
               Text(
                 widget.label + (widget.isRequired ? ' *' : ''),
-                style: GoogleFonts.inter(
+                style: AppTypography.textStyle(
                   fontSize: 16,
                   color: AppColors.textSecondary,
                 ),
@@ -105,9 +105,13 @@ class _FieldMultiCheckboxState extends State<FieldMultiCheckbox> {
               const SizedBox(height: 4),
               ...widget.options.map(
                 (o) => CheckboxListTile(
-                  title: Text(o.value,
-                      style: GoogleFonts.inter(
-                          fontSize: 15, color: AppColors.textPrimary)),
+                  title: Text(
+                    o.value,
+                    style: AppTypography.textStyle(
+                      fontSize: 15,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
                   value: _selected.contains(o.key),
                   activeColor: AppColors.accent,
                   contentPadding: EdgeInsets.zero,
@@ -129,8 +133,10 @@ class _FieldMultiCheckboxState extends State<FieldMultiCheckbox> {
               if (state.hasError)
                 Text(
                   state.errorText!,
-                  style: GoogleFonts.inter(
-                      fontSize: 12, color: AppColors.error),
+                  style: AppTypography.textStyle(
+                    fontSize: 12,
+                    color: AppColors.error,
+                  ),
                 ),
             ],
           );

@@ -4,7 +4,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:fieldlog_mobile/app_typography.dart';
 import '../models/tally_component.dart';
 import '../theme/app_colors.dart';
 
@@ -100,18 +100,15 @@ class _TallyRendererState extends State<TallyRenderer> {
     _counts.addAll(widget.initialCounts);
   }
 
-  List<TallyComponent> get _parsed =>
-      widget.components
-          .map((c) => TallyComponent.fromJson(c as Map<String, dynamic>))
-          .toList();
+  List<TallyComponent> get _parsed => widget.components
+      .map((c) => TallyComponent.fromJson(c as Map<String, dynamic>))
+      .toList();
 
   List<TallyComponent> get _currentItems {
     if (_activeGroup != null) {
       return _activeGroup!.children;
     }
-    return _parsed
-        .where((c) => !c.isGroup || c.children.isNotEmpty)
-        .toList();
+    return _parsed.where((c) => !c.isGroup || c.children.isNotEmpty).toList();
   }
 
   void _handleTap(TallyComponent item) {
@@ -142,20 +139,21 @@ class _TallyRendererState extends State<TallyRenderer> {
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             decoration: BoxDecoration(
-              border: Border(
-                bottom: BorderSide(color: Colors.grey.shade200),
-              ),
+              border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
             ),
             child: GestureDetector(
               onTap: () => setState(() => _activeGroup = null),
               child: Row(
                 children: [
-                  const Icon(Icons.arrow_back_ios,
-                      size: 16, color: AppColors.accent),
+                  const Icon(
+                    Icons.arrow_back_ios,
+                    size: 16,
+                    color: AppColors.accent,
+                  ),
                   const SizedBox(width: 4),
                   Text(
                     _activeGroup!.label,
-                    style: GoogleFonts.inter(
+                    style: AppTypography.textStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w600,
                       color: AppColors.accent,
@@ -202,7 +200,11 @@ class _TallyCard extends StatefulWidget {
   final int count;
   final VoidCallback onTap;
 
-  const _TallyCard({required this.item, required this.count, required this.onTap});
+  const _TallyCard({
+    required this.item,
+    required this.count,
+    required this.onTap,
+  });
 
   @override
   State<_TallyCard> createState() => _TallyCardState();
@@ -283,12 +285,16 @@ class _TallyCardState extends State<_TallyCard>
                                     child: SizedBox(
                                       width: 24,
                                       height: 24,
-                                      child: CircularProgressIndicator(strokeWidth: 2),
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
                                     ),
                                   ),
                                   errorWidget: (context, url, error) => Icon(
                                     Icons.image_not_supported_outlined,
-                                    color: tapped ? Colors.white70 : AppColors.textTertiary,
+                                    color: tapped
+                                        ? Colors.white70
+                                        : AppColors.textTertiary,
                                     size: 32,
                                   ),
                                 ),
@@ -297,10 +303,12 @@ class _TallyCardState extends State<_TallyCard>
                             const SizedBox(height: 8),
                             Text(
                               widget.item.label,
-                              style: GoogleFonts.inter(
+                              style: AppTypography.textStyle(
                                 fontSize: 13,
                                 fontWeight: FontWeight.w600,
-                                color: tapped ? Colors.white : AppColors.textPrimary,
+                                color: tapped
+                                    ? Colors.white
+                                    : AppColors.textPrimary,
                               ),
                               textAlign: TextAlign.center,
                               maxLines: 2,
@@ -310,10 +318,12 @@ class _TallyCardState extends State<_TallyCard>
                         )
                       : Text(
                           widget.item.label,
-                          style: GoogleFonts.inter(
+                          style: AppTypography.textStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.w600,
-                            color: tapped ? Colors.white : AppColors.textPrimary,
+                            color: tapped
+                                ? Colors.white
+                                : AppColors.textPrimary,
                           ),
                           textAlign: TextAlign.center,
                         ),
@@ -325,8 +335,14 @@ class _TallyCardState extends State<_TallyCard>
                   top: 6,
                   right: 6,
                   child: Container(
-                    constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    constraints: const BoxConstraints(
+                      minWidth: 24,
+                      minHeight: 24,
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
                       color: tapped ? Colors.white : AppColors.accent,
                       borderRadius: BorderRadius.circular(12),
@@ -334,7 +350,7 @@ class _TallyCardState extends State<_TallyCard>
                     child: Center(
                       child: Text(
                         '${widget.count}',
-                        style: GoogleFonts.inter(
+                        style: AppTypography.textStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w700,
                           color: tapped ? AppColors.accent : Colors.white,
@@ -349,7 +365,7 @@ class _TallyCardState extends State<_TallyCard>
                   child: Center(
                     child: Text(
                       '+1',
-                      style: GoogleFonts.inter(
+                      style: AppTypography.textStyle(
                         fontSize: 32,
                         fontWeight: FontWeight.w700,
                         color: Colors.white,
@@ -411,8 +427,11 @@ class _GroupCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 8),
                 ] else ...[
-                  const Icon(Icons.folder_outlined,
-                      color: AppColors.accent, size: 28),
+                  const Icon(
+                    Icons.folder_outlined,
+                    color: AppColors.accent,
+                    size: 28,
+                  ),
                   const SizedBox(height: 8),
                 ],
                 Row(
@@ -422,7 +441,7 @@ class _GroupCard extends StatelessWidget {
                     Flexible(
                       child: Text(
                         item.label,
-                        style: GoogleFonts.inter(
+                        style: AppTypography.textStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
                           color: AppColors.accent,
@@ -433,8 +452,11 @@ class _GroupCard extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(width: 4),
-                    const Icon(Icons.chevron_right,
-                        size: 18, color: AppColors.accent),
+                    const Icon(
+                      Icons.chevron_right,
+                      size: 18,
+                      color: AppColors.accent,
+                    ),
                   ],
                 ),
               ],

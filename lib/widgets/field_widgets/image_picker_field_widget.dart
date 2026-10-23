@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:fieldlog_mobile/app_typography.dart';
 import '../../models/survey_element.dart';
 import '../../theme/app_colors.dart';
 
@@ -74,7 +74,7 @@ class _ImagePickerFieldWidgetState extends State<ImagePickerFieldWidget> {
             children: [
               Text(
                 widget.label + (widget.isRequired ? ' *' : ''),
-                style: GoogleFonts.inter(
+                style: AppTypography.textStyle(
                   fontSize: 16,
                   color: AppColors.textSecondary,
                 ),
@@ -100,7 +100,7 @@ class _ImagePickerFieldWidgetState extends State<ImagePickerFieldWidget> {
                 const SizedBox(height: 8),
                 Text(
                   state.errorText!,
-                  style: GoogleFonts.inter(
+                  style: AppTypography.textStyle(
                     fontSize: 12,
                     color: Theme.of(context).colorScheme.error,
                   ),
@@ -147,8 +147,11 @@ class _ImagePickerFieldWidgetState extends State<ImagePickerFieldWidget> {
                   errorWidget: (context, url, error) => Container(
                     color: Colors.grey.shade100,
                     child: const Center(
-                      child: Icon(Icons.broken_image,
-                          size: 32, color: AppColors.textTertiary),
+                      child: Icon(
+                        Icons.broken_image,
+                        size: 32,
+                        color: AppColors.textTertiary,
+                      ),
                     ),
                   ),
                 )
@@ -158,7 +161,9 @@ class _ImagePickerFieldWidgetState extends State<ImagePickerFieldWidget> {
                   child: Center(
                     child: Text(
                       choice.text,
-                      style: GoogleFonts.inter(color: AppColors.textSecondary),
+                      style: AppTypography.textStyle(
+                        color: AppColors.textSecondary,
+                      ),
                     ),
                   ),
                 ),
@@ -174,8 +179,11 @@ class _ImagePickerFieldWidgetState extends State<ImagePickerFieldWidget> {
                       color: AppColors.accent,
                       shape: BoxShape.circle,
                     ),
-                    child: const Icon(Icons.check,
-                        size: 16, color: Colors.white),
+                    child: const Icon(
+                      Icons.check,
+                      size: 16,
+                      color: Colors.white,
+                    ),
                   ),
                 ),
               // Label at bottom
@@ -185,8 +193,10 @@ class _ImagePickerFieldWidgetState extends State<ImagePickerFieldWidget> {
                   right: 0,
                   bottom: 0,
                   child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 6,
+                    ),
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
                         begin: Alignment.bottomCenter,
@@ -199,7 +209,7 @@ class _ImagePickerFieldWidgetState extends State<ImagePickerFieldWidget> {
                     ),
                     child: Text(
                       choice.text,
-                      style: GoogleFonts.inter(
+                      style: AppTypography.textStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w500,
                         color: Colors.white,
