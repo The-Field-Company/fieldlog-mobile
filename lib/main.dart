@@ -16,15 +16,30 @@ import 'services/api_service.dart';
 import 'services/powersync_service.dart';
 import 'services/connectivity_service.dart';
 import 'services/sync_error_service.dart';
+import 'services/telemetry_service.dart';
 
 void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await TelemetryService.initialize();
+
   await SentryFlutter.init(
     (options) {
-      options.dsn = const String.fromEnvironment('GLITCHTIP_DSN');
+      // Sentry 8 disables itself when the DSN is empty.
+      options.dsn =
+          TelemetryService.isConfigured ? TelemetryService.dsn.trim() : '';
       options.tracesSampleRate = kDebugMode ? 1.0 : 0.01;
       options.environment = kDebugMode ? 'debug' : 'production';
       options.sendDefaultPii = false;
       options.enableAutoSessionTracking = false;
+      // Native crash handlers can send directly from the platform SDK, outside
+      // the Dart consent callbacks below.
+      options.enableNativeCrashHandling = false;
+      options.beforeSend = (event, hint) =>
+          TelemetryService.isEnabled ? event : null;
+      options.beforeSendTransaction = (transaction) =>
+          TelemetryService.isEnabled ? transaction : null;
+      options.beforeSendFeedback = (feedback, hint) =>
+          TelemetryService.isEnabled ? feedback : null;
     },
     appRunner: () async {
       await ConnectivityService.init();

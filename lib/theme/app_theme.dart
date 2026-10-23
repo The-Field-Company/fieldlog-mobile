@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:fieldlog_mobile/app_typography.dart';
 import 'app_colors.dart';
 
 class AppTheme {
@@ -15,28 +15,28 @@ class AppTheme {
         error: AppColors.error,
       ),
       scaffoldBackgroundColor: AppColors.primaryBg,
-      textTheme: GoogleFonts.interTextTheme().copyWith(
-        headlineMedium: GoogleFonts.inter(
+      textTheme: AppTypography.textTheme().copyWith(
+        headlineMedium: AppTypography.textStyle(
           fontSize: 28,
           fontWeight: FontWeight.w600,
           color: AppColors.textPrimary,
         ),
-        headlineSmall: GoogleFonts.inter(
+        headlineSmall: AppTypography.textStyle(
           fontSize: 24,
           fontWeight: FontWeight.w600,
           color: AppColors.textPrimary,
         ),
-        bodyLarge: GoogleFonts.inter(
+        bodyLarge: AppTypography.textStyle(
           fontSize: 16,
           fontWeight: FontWeight.w400,
           color: AppColors.textSecondary,
         ),
-        bodyMedium: GoogleFonts.inter(
+        bodyMedium: AppTypography.textStyle(
           fontSize: 14,
           fontWeight: FontWeight.w400,
           color: AppColors.textTertiary,
         ),
-        labelSmall: GoogleFonts.inter(
+        labelSmall: AppTypography.textStyle(
           fontSize: 12,
           fontWeight: FontWeight.w600,
           color: AppColors.textTertiary,
@@ -48,7 +48,7 @@ class AppTheme {
         foregroundColor: AppColors.textPrimary,
         elevation: 0,
         scrolledUnderElevation: 0.5,
-        titleTextStyle: GoogleFonts.inter(
+        titleTextStyle: AppTypography.textStyle(
           fontSize: 18,
           fontWeight: FontWeight.w600,
           color: AppColors.textPrimary,
@@ -59,10 +59,8 @@ class AppTheme {
           backgroundColor: AppColors.accent,
           foregroundColor: Colors.white,
           padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 32),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(6),
-          ),
-          textStyle: GoogleFonts.inter(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+          textStyle: AppTypography.textStyle(
             fontSize: 16,
             fontWeight: FontWeight.w500,
           ),
@@ -82,13 +80,12 @@ class AppTheme {
         errorBorder: const UnderlineInputBorder(
           borderSide: BorderSide(color: AppColors.error),
         ),
-        contentPadding:
-            const EdgeInsets.symmetric(vertical: 12, horizontal: 0),
-        hintStyle: GoogleFonts.inter(
+        contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 0),
+        hintStyle: AppTypography.textStyle(
           fontSize: 16,
           color: AppColors.textTertiary,
         ),
-        labelStyle: GoogleFonts.inter(
+        labelStyle: AppTypography.textStyle(
           fontSize: 16,
           color: AppColors.textSecondary,
         ),

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:fieldlog_mobile/app_typography.dart';
 import '../models/survey_element.dart';
 import '../theme/app_colors.dart';
 import '../utils/expression_engine.dart';
@@ -157,7 +157,8 @@ class _SurveyjsRendererState extends State<SurveyjsRenderer> {
     }
 
     final isEnabled = ExpressionEngine.evaluate(element.enableIf, _data);
-    final isRequired = element.isRequired ||
+    final isRequired =
+        element.isRequired ||
         (element.requiredIf != null &&
             ExpressionEngine.evaluate(element.requiredIf, _data));
 
@@ -186,8 +187,8 @@ class _SurveyjsRendererState extends State<SurveyjsRenderer> {
           label: element.title,
           labelTrue: element.labelTrue,
           labelFalse: element.labelFalse,
-          initialValue: _data[element.name] as bool? ??
-              (element.defaultValue == true),
+          initialValue:
+              _data[element.name] as bool? ?? (element.defaultValue == true),
           onChanged: (v) => _updateData(element.name, v),
         );
       case 'rating':
@@ -282,7 +283,7 @@ class _SurveyjsRendererState extends State<SurveyjsRenderer> {
             ),
             child: Text(
               'Unsupported field type: ${element.type}',
-              style: GoogleFonts.inter(
+              style: AppTypography.textStyle(
                 fontSize: 14,
                 color: AppColors.textTertiary,
               ),
@@ -292,15 +293,10 @@ class _SurveyjsRendererState extends State<SurveyjsRenderer> {
     }
 
     if (!isEnabled) {
-      child = IgnorePointer(
-        child: Opacity(opacity: 0.5, child: child),
-      );
+      child = IgnorePointer(child: Opacity(opacity: 0.5, child: child));
     }
 
-    return KeyedSubtree(
-      key: ValueKey(element.name),
-      child: child,
-    );
+    return KeyedSubtree(key: ValueKey(element.name), child: child);
   }
 
   // ── Text element with inputType routing ──
@@ -357,9 +353,7 @@ class _SurveyjsRendererState extends State<SurveyjsRenderer> {
       return FieldDropdown(
         label: element.title,
         isRequired: isRequired,
-        options: element.choices
-            .map((c) => MapEntry(c.value, c.text))
-            .toList(),
+        options: element.choices.map((c) => MapEntry(c.value, c.text)).toList(),
         initialValue: _data[element.name]?.toString(),
         onChanged: (v) => _updateData(element.name, v),
       );
@@ -378,10 +372,8 @@ class _SurveyjsRendererState extends State<SurveyjsRenderer> {
           FieldTextInput(
             key: ValueKey('${element.name}-Comment'),
             label: '${element.title} - please specify',
-            onChanged: (v) =>
-                _updateData('${element.name}-Comment', v),
-            initialValue:
-                _data['${element.name}-Comment']?.toString(),
+            onChanged: (v) => _updateData('${element.name}-Comment', v),
+            initialValue: _data['${element.name}-Comment']?.toString(),
           ),
       ],
     );
@@ -392,9 +384,7 @@ class _SurveyjsRendererState extends State<SurveyjsRenderer> {
       return FieldRadioGroup(
         label: element.title,
         isRequired: isRequired,
-        options: element.choices
-            .map((c) => MapEntry(c.value, c.text))
-            .toList(),
+        options: element.choices.map((c) => MapEntry(c.value, c.text)).toList(),
         initialValue: _data[element.name]?.toString(),
         onChanged: (v) => _updateData(element.name, v),
       );
@@ -413,10 +403,8 @@ class _SurveyjsRendererState extends State<SurveyjsRenderer> {
           FieldTextInput(
             key: ValueKey('${element.name}-Comment'),
             label: '${element.title} - please specify',
-            onChanged: (v) =>
-                _updateData('${element.name}-Comment', v),
-            initialValue:
-                _data['${element.name}-Comment']?.toString(),
+            onChanged: (v) => _updateData('${element.name}-Comment', v),
+            initialValue: _data['${element.name}-Comment']?.toString(),
           ),
       ],
     );
@@ -427,9 +415,7 @@ class _SurveyjsRendererState extends State<SurveyjsRenderer> {
       return FieldMultiCheckbox(
         label: element.title,
         isRequired: isRequired,
-        options: element.choices
-            .map((c) => MapEntry(c.value, c.text))
-            .toList(),
+        options: element.choices.map((c) => MapEntry(c.value, c.text)).toList(),
         initialValue: (_data[element.name] as List?)?.cast<String>(),
         onChanged: (v) => _updateData(element.name, v),
       );
@@ -449,10 +435,8 @@ class _SurveyjsRendererState extends State<SurveyjsRenderer> {
           FieldTextInput(
             key: ValueKey('${element.name}-Comment'),
             label: '${element.title} - please specify',
-            onChanged: (v) =>
-                _updateData('${element.name}-Comment', v),
-            initialValue:
-                _data['${element.name}-Comment']?.toString(),
+            onChanged: (v) => _updateData('${element.name}-Comment', v),
+            initialValue: _data['${element.name}-Comment']?.toString(),
           ),
       ],
     );
@@ -475,7 +459,7 @@ class _SurveyjsRendererState extends State<SurveyjsRenderer> {
             if (element.title.isNotEmpty)
               Text(
                 element.title,
-                style: GoogleFonts.inter(
+                style: AppTypography.textStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
                   color: AppColors.textPrimary,
@@ -485,7 +469,7 @@ class _SurveyjsRendererState extends State<SurveyjsRenderer> {
               const SizedBox(height: 4),
               Text(
                 element.description!,
-                style: GoogleFonts.inter(
+                style: AppTypography.textStyle(
                   fontSize: 13,
                   color: AppColors.textSecondary,
                 ),
@@ -521,14 +505,13 @@ class _SurveyjsRendererState extends State<SurveyjsRenderer> {
           // Page header (title + indicator)
           if (_isMultiPage || currentPage.title != null)
             Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
               child: Column(
                 children: [
                   if (_isMultiPage)
                     Text(
                       'Page ${_currentPage + 1} of ${pages.length}',
-                      style: GoogleFonts.inter(
+                      style: AppTypography.textStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
                         color: AppColors.textTertiary,
@@ -539,7 +522,7 @@ class _SurveyjsRendererState extends State<SurveyjsRenderer> {
                     const SizedBox(height: 4),
                     Text(
                       currentPage.title!,
-                      style: GoogleFonts.inter(
+                      style: AppTypography.textStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.w600,
                         color: AppColors.textPrimary,
@@ -550,7 +533,7 @@ class _SurveyjsRendererState extends State<SurveyjsRenderer> {
                     const SizedBox(height: 2),
                     Text(
                       currentPage.description!,
-                      style: GoogleFonts.inter(
+                      style: AppTypography.textStyle(
                         fontSize: 13,
                         color: AppColors.textSecondary,
                       ),
@@ -563,8 +546,7 @@ class _SurveyjsRendererState extends State<SurveyjsRenderer> {
           Expanded(
             child: ListView(
               padding: const EdgeInsets.all(24),
-              children:
-                  currentPage.elements.map(_buildElement).toList(),
+              children: currentPage.elements.map(_buildElement).toList(),
             ),
           ),
           // Bottom bar
@@ -572,9 +554,7 @@ class _SurveyjsRendererState extends State<SurveyjsRenderer> {
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               color: Colors.white,
-              border: Border(
-                top: BorderSide(color: Colors.grey.shade200),
-              ),
+              border: Border(top: BorderSide(color: Colors.grey.shade200)),
             ),
             child: SafeArea(
               top: false,
@@ -587,10 +567,10 @@ class _SurveyjsRendererState extends State<SurveyjsRenderer> {
                               onPressed: _prevPage,
                               style: OutlinedButton.styleFrom(
                                 foregroundColor: AppColors.accent,
-                                side: const BorderSide(
-                                    color: AppColors.accent),
+                                side: const BorderSide(color: AppColors.accent),
                                 padding: const EdgeInsets.symmetric(
-                                    vertical: 14),
+                                  vertical: 14,
+                                ),
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(6),
                                 ),
@@ -598,15 +578,14 @@ class _SurveyjsRendererState extends State<SurveyjsRenderer> {
                               child: const Text('Previous'),
                             ),
                           ),
-                        if (_currentPage > 0)
-                          const SizedBox(width: 12),
+                        if (_currentPage > 0) const SizedBox(width: 12),
                         Expanded(
                           child: ElevatedButton(
                             onPressed: _submitting
                                 ? null
                                 : (_currentPage < pages.length - 1
-                                    ? _nextPage
-                                    : _submit),
+                                      ? _nextPage
+                                      : _submit),
                             child: _submitting
                                 ? const SizedBox(
                                     height: 20,
@@ -616,9 +595,11 @@ class _SurveyjsRendererState extends State<SurveyjsRenderer> {
                                       color: Colors.white,
                                     ),
                                   )
-                                : Text(_currentPage < pages.length - 1
-                                    ? 'Next'
-                                    : 'Submit'),
+                                : Text(
+                                    _currentPage < pages.length - 1
+                                        ? 'Next'
+                                        : 'Submit',
+                                  ),
                           ),
                         ),
                       ],

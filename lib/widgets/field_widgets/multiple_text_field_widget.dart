@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:fieldlog_mobile/app_typography.dart';
 import '../../models/survey_element.dart';
 import '../../theme/app_colors.dart';
 
@@ -57,7 +57,7 @@ class _MultipleTextFieldWidgetState extends State<MultipleTextFieldWidget> {
         children: [
           Text(
             widget.label + (widget.isRequired ? ' *' : ''),
-            style: GoogleFonts.inter(
+            style: AppTypography.textStyle(
               fontSize: 16,
               color: AppColors.textSecondary,
             ),
@@ -75,8 +75,8 @@ class _MultipleTextFieldWidgetState extends State<MultipleTextFieldWidget> {
                 ),
                 validator: item.isRequired
                     ? (value) => (value == null || value.isEmpty)
-                        ? '${item.title} is required'
-                        : null
+                          ? '${item.title} is required'
+                          : null
                     : null,
                 onChanged: (v) {
                   _values[item.name] = v;

@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:fieldlog_mobile/app_typography.dart';
 import '../theme/app_colors.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
@@ -43,13 +43,17 @@ class _LoginScreenState extends State<LoginScreen> {
         final subscriptions = await ApiService.getSubscriptions();
         await PowerSyncService.seedSessions(subscriptions);
       } catch (e) {
-        if (kDebugMode) debugPrint('[Seed] subscription seed failed after login: $e');
+        if (kDebugMode)
+          debugPrint('[Seed] subscription seed failed after login: $e');
       }
       if (!mounted) return;
-      final pendingInviteToken = ModalRoute.of(context)?.settings.arguments as String?;
+      final pendingInviteToken =
+          ModalRoute.of(context)?.settings.arguments as String?;
       if (pendingInviteToken != null) {
         Navigator.pushNamedAndRemoveUntil(
-          context, '/invite', (_) => false,
+          context,
+          '/invite',
+          (_) => false,
           arguments: {'token': pendingInviteToken, 'authenticated': true},
         );
       } else {
@@ -58,9 +62,13 @@ class _LoginScreenState extends State<LoginScreen> {
     } on SocketException {
       setState(() => _error = 'No internet connection');
     } on TimeoutException {
-      setState(() => _error = 'Connection timed out. Check your server address.');
+      setState(
+        () => _error = 'Connection timed out. Check your server address.',
+      );
+    } on AuthException catch (e) {
+      setState(() => _error = e.message);
     } catch (e) {
-      setState(() => _error = 'Invalid username or password');
+      setState(() => _error = 'Sign in failed. Please try again.');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -86,14 +94,11 @@ class _LoginScreenState extends State<LoginScreen> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     // Logo
-                    Image.asset(
-                      'assets/logo.png',
-                      height: 120,
-                    ),
+                    Image.asset('assets/logo.png', height: 120),
                     const SizedBox(height: 8),
                     Text(
                       'Scientific Field Data Collection',
-                      style: GoogleFonts.inter(
+                      style: AppTypography.textStyle(
                         fontSize: 14,
                         color: AppColors.textTertiary,
                       ),
@@ -105,13 +110,11 @@ class _LoginScreenState extends State<LoginScreen> {
                       controller: _usernameController,
                       textInputAction: TextInputAction.next,
                       autocorrect: false,
-                      style: GoogleFonts.inter(
+                      style: AppTypography.textStyle(
                         fontSize: 16,
                         color: AppColors.textPrimary,
                       ),
-                      decoration: const InputDecoration(
-                        hintText: 'Username',
-                      ),
+                      decoration: const InputDecoration(hintText: 'Username'),
                     ),
                     const SizedBox(height: 16),
 
@@ -121,13 +124,11 @@ class _LoginScreenState extends State<LoginScreen> {
                       obscureText: true,
                       textInputAction: TextInputAction.go,
                       onSubmitted: (_) => _login(),
-                      style: GoogleFonts.inter(
+                      style: AppTypography.textStyle(
                         fontSize: 16,
                         color: AppColors.textPrimary,
                       ),
-                      decoration: const InputDecoration(
-                        hintText: 'Password',
-                      ),
+                      decoration: const InputDecoration(hintText: 'Password'),
                     ),
 
                     // Error message
@@ -136,7 +137,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         padding: const EdgeInsets.only(top: 8),
                         child: Text(
                           _error!,
-                          style: GoogleFonts.inter(
+                          style: AppTypography.textStyle(
                             fontSize: 14,
                             color: AppColors.error,
                           ),

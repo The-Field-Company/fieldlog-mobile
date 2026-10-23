@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:fieldlog_mobile/app_typography.dart';
 import '../../theme/app_colors.dart';
 
 /// Renders static HTML content as styled text.
@@ -22,11 +22,13 @@ class HtmlFieldWidget extends StatelessWidget {
         decoration: BoxDecoration(
           color: AppColors.accent.withValues(alpha: 0.04),
           borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: AppColors.borderColor.withValues(alpha: 0.5)),
+          border: Border.all(
+            color: AppColors.borderColor.withValues(alpha: 0.5),
+          ),
         ),
         child: Text(
           text,
-          style: GoogleFonts.inter(
+          style: AppTypography.textStyle(
             fontSize: 14,
             height: 1.5,
             color: AppColors.textPrimary,

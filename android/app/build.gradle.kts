@@ -13,6 +13,10 @@ if (keyPropertiesFile.exists()) {
     keyProperties.load(keyPropertiesFile.inputStream())
 }
 
+// F-Droid must sign its own APK. Enable this with
+// `--android-project-arg=fdroid=true` to produce an unsigned release APK.
+val fdroidBuild = providers.gradleProperty("fdroid").orNull == "true"
+
 android {
     namespace = "com.fieldlog.fieldlog_mobile"
     compileSdk = flutter.compileSdkVersion
@@ -28,7 +32,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.fieldlog.fieldlog_mobile"
+        applicationId = "com.thefieldco.fieldlog"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
@@ -44,12 +48,17 @@ android {
         }
     }
 
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
+    }
+
     buildTypes {
         release {
-            signingConfig = if (keyPropertiesFile.exists()) {
-                signingConfigs.getByName("release")
-            } else {
-                signingConfigs.getByName("debug")
+            signingConfig = when {
+                fdroidBuild -> null
+                keyPropertiesFile.exists() -> signingConfigs.getByName("release")
+                else -> signingConfigs.getByName("debug")
             }
         }
     }

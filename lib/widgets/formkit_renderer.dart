@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:fieldlog_mobile/app_typography.dart';
 import '../models/form_component.dart';
 import '../theme/app_colors.dart';
 import 'field_widgets/text_field_widget.dart';
@@ -132,16 +132,14 @@ class _FormkitRendererState extends State<FormkitRenderer> {
         return FieldDropdown(
           label: comp.label,
           isRequired: comp.isRequired,
-          options:
-              comp.options.map((o) => MapEntry(o.value, o.label)).toList(),
+          options: comp.options.map((o) => MapEntry(o.value, o.label)).toList(),
           onChanged: (v) => _data[comp.key] = v,
         );
       case 'radio':
         return FieldRadioGroup(
           label: comp.label,
           isRequired: comp.isRequired,
-          options:
-              comp.options.map((o) => MapEntry(o.value, o.label)).toList(),
+          options: comp.options.map((o) => MapEntry(o.value, o.label)).toList(),
           onChanged: (v) => _data[comp.key] = v,
         );
       case 'checkbox':
@@ -165,13 +163,16 @@ class _FormkitRendererState extends State<FormkitRenderer> {
             ),
             child: Row(
               children: [
-                Icon(Icons.info_outline,
-                    size: 16, color: AppColors.textTertiary),
+                Icon(
+                  Icons.info_outline,
+                  size: 16,
+                  color: AppColors.textTertiary,
+                ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     '${comp.label} (not supported in this form mode)',
-                    style: GoogleFonts.inter(
+                    style: AppTypography.textStyle(
                       fontSize: 13,
                       color: AppColors.textTertiary,
                     ),
@@ -211,9 +212,7 @@ class _FormkitRendererState extends State<FormkitRenderer> {
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               color: Colors.white,
-              border: Border(
-                top: BorderSide(color: Colors.grey.shade200),
-              ),
+              border: Border(top: BorderSide(color: Colors.grey.shade200)),
             ),
             child: SafeArea(
               top: false,

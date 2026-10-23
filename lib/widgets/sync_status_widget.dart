@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:fieldlog_mobile/app_typography.dart';
 import 'package:powersync/powersync.dart';
 import '../theme/app_colors.dart';
 import '../services/powersync_service.dart';
@@ -138,17 +138,14 @@ class _SyncStatusWidgetState extends State<SyncStatusWidget> {
             SizedBox(
               width: 12,
               height: 12,
-              child: CircularProgressIndicator(
-                strokeWidth: 1.5,
-                color: color,
-              ),
+              child: CircularProgressIndicator(strokeWidth: 1.5, color: color),
             )
           else
             Icon(icon, size: 14, color: color),
           const SizedBox(width: 4),
           Text(
             label,
-            style: GoogleFonts.inter(
+            style: AppTypography.textStyle(
               fontSize: 11,
               fontWeight: FontWeight.w500,
               color: color,
@@ -272,13 +269,7 @@ class _SyncStatusTextState extends State<SyncStatusText> {
       children: [
         Icon(icon, size: 14, color: color),
         const SizedBox(width: 6),
-        Text(
-          text,
-          style: GoogleFonts.inter(
-            fontSize: 13,
-            color: color,
-          ),
-        ),
+        Text(text, style: AppTypography.textStyle(fontSize: 13, color: color)),
       ],
     );
   }

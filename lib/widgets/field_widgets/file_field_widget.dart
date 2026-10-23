@@ -1,6 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:fieldlog_mobile/app_typography.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
@@ -70,7 +70,9 @@ class _FileFieldWidgetState extends State<FileFieldWidget> {
     if (mb > 2 && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Large file (${mb.toStringAsFixed(1)}MB) — upload may be slow'),
+          content: Text(
+            'Large file (${mb.toStringAsFixed(1)}MB) — upload may be slow',
+          ),
           backgroundColor: Colors.orange.shade700,
         ),
       );
@@ -128,8 +130,7 @@ class _FileFieldWidgetState extends State<FileFieldWidget> {
       padding: const EdgeInsets.only(bottom: 20),
       child: FormField<File>(
         validator: widget.isRequired
-            ? (value) =>
-                _file == null ? '${widget.label} is required' : null
+            ? (value) => _file == null ? '${widget.label} is required' : null
             : null,
         builder: (state) {
           return Column(
@@ -137,7 +138,7 @@ class _FileFieldWidgetState extends State<FileFieldWidget> {
             children: [
               Text(
                 widget.label + (widget.isRequired ? ' *' : ''),
-                style: GoogleFonts.inter(
+                style: AppTypography.textStyle(
                   fontSize: 16,
                   color: AppColors.textSecondary,
                 ),
@@ -151,17 +152,21 @@ class _FileFieldWidgetState extends State<FileFieldWidget> {
                     height: 120,
                     child: CustomPaint(
                       painter: _DashedBorderPainter(
-                          color: AppColors.borderColor),
+                        color: AppColors.borderColor,
+                      ),
                       child: Center(
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            const Icon(Icons.camera_alt,
-                                size: 32, color: AppColors.textTertiary),
+                            const Icon(
+                              Icons.camera_alt,
+                              size: 32,
+                              color: AppColors.textTertiary,
+                            ),
                             const SizedBox(height: 4),
                             Text(
                               'Tap to add photo',
-                              style: GoogleFonts.inter(
+                              style: AppTypography.textStyle(
                                 fontSize: 13,
                                 color: AppColors.textTertiary,
                               ),
@@ -195,8 +200,11 @@ class _FileFieldWidgetState extends State<FileFieldWidget> {
                             color: Colors.black54,
                             shape: BoxShape.circle,
                           ),
-                          child: const Icon(Icons.close,
-                              size: 18, color: Colors.white),
+                          child: const Icon(
+                            Icons.close,
+                            size: 18,
+                            color: Colors.white,
+                          ),
                         ),
                       ),
                     ),
@@ -207,8 +215,10 @@ class _FileFieldWidgetState extends State<FileFieldWidget> {
                   padding: const EdgeInsets.only(top: 4),
                   child: Text(
                     state.errorText!,
-                    style: GoogleFonts.inter(
-                        fontSize: 12, color: AppColors.error),
+                    style: AppTypography.textStyle(
+                      fontSize: 12,
+                      color: AppColors.error,
+                    ),
                   ),
                 ),
             ],
@@ -241,10 +251,8 @@ class _DashedBorderPainter extends CustomPainter {
     final metrics = path.computeMetrics().first;
     double distance = 0;
     while (distance < metrics.length) {
-      final end =
-          (distance + dashWidth).clamp(0.0, metrics.length);
-      final extracted =
-          metrics.extractPath(distance, end);
+      final end = (distance + dashWidth).clamp(0.0, metrics.length);
+      final extracted = metrics.extractPath(distance, end);
       canvas.drawPath(extracted, paint);
       distance += dashWidth + dashSpace;
     }

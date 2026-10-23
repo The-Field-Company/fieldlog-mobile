@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:fieldlog_mobile/app_typography.dart';
 import '../../theme/app_colors.dart';
 
 class FieldRadioGroup extends StatefulWidget {
@@ -38,8 +38,7 @@ class _FieldRadioGroupState extends State<FieldRadioGroup> {
       child: FormField<String>(
         initialValue: _value,
         validator: widget.isRequired
-            ? (value) =>
-                _value == null ? '${widget.label} is required' : null
+            ? (value) => _value == null ? '${widget.label} is required' : null
             : null,
         builder: (state) {
           return Column(
@@ -47,7 +46,7 @@ class _FieldRadioGroupState extends State<FieldRadioGroup> {
             children: [
               Text(
                 widget.label + (widget.isRequired ? ' *' : ''),
-                style: GoogleFonts.inter(
+                style: AppTypography.textStyle(
                   fontSize: 16,
                   color: AppColors.textSecondary,
                 ),
@@ -61,23 +60,31 @@ class _FieldRadioGroupState extends State<FieldRadioGroup> {
                   widget.onChanged(value);
                 },
                 child: Column(
-                  children: widget.options.map(
-                    (o) => RadioListTile<String>(
-                      title: Text(o.value,
-                          style: GoogleFonts.inter(
-                              fontSize: 15, color: AppColors.textPrimary)),
-                      value: o.key,
-                      contentPadding: EdgeInsets.zero,
-                      dense: true,
-                    ),
-                  ).toList(),
+                  children: widget.options
+                      .map(
+                        (o) => RadioListTile<String>(
+                          title: Text(
+                            o.value,
+                            style: AppTypography.textStyle(
+                              fontSize: 15,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                          value: o.key,
+                          contentPadding: EdgeInsets.zero,
+                          dense: true,
+                        ),
+                      )
+                      .toList(),
                 ),
               ),
               if (state.hasError)
                 Text(
                   state.errorText!,
-                  style: GoogleFonts.inter(
-                      fontSize: 12, color: AppColors.error),
+                  style: AppTypography.textStyle(
+                    fontSize: 12,
+                    color: AppColors.error,
+                  ),
                 ),
             ],
           );

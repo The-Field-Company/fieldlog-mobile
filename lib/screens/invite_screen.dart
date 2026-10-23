@@ -1,6 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:fieldlog_mobile/app_typography.dart';
 import '../theme/app_colors.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
@@ -80,7 +80,8 @@ class _InviteScreenState extends State<InviteScreen> {
         final subscriptions = await ApiService.getSubscriptions();
         await PowerSyncService.seedSessions(subscriptions);
       } catch (e) {
-        if (kDebugMode) debugPrint('[Invite] local_sessions re-seed failed: $e');
+        if (kDebugMode)
+          debugPrint('[Invite] local_sessions re-seed failed: $e');
       }
 
       if (!mounted) return;
@@ -131,18 +132,22 @@ class _InviteScreenState extends State<InviteScreen> {
       return Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.link_off_outlined, size: 48, color: AppColors.textTertiary),
+          const Icon(
+            Icons.link_off_outlined,
+            size: 48,
+            color: AppColors.textTertiary,
+          ),
           const SizedBox(height: 16),
           Text(
             _error!,
-            style: GoogleFonts.inter(fontSize: 15, color: AppColors.textSecondary),
+            style: AppTypography.textStyle(
+              fontSize: 15,
+              color: AppColors.textSecondary,
+            ),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 24),
-          OutlinedButton(
-            onPressed: _goHome,
-            child: const Text('Go Home'),
-          ),
+          OutlinedButton(onPressed: _goHome, child: const Text('Go Home')),
         ],
       );
     }
@@ -151,16 +156,27 @@ class _InviteScreenState extends State<InviteScreen> {
       return Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.check_circle_outline, size: 56, color: AppColors.accent),
+          const Icon(
+            Icons.check_circle_outline,
+            size: 56,
+            color: AppColors.accent,
+          ),
           const SizedBox(height: 16),
           Text(
             "You've joined",
-            style: GoogleFonts.inter(fontSize: 14, color: AppColors.textSecondary),
+            style: AppTypography.textStyle(
+              fontSize: 14,
+              color: AppColors.textSecondary,
+            ),
           ),
           const SizedBox(height: 4),
           Text(
             _invite?['session_name'] ?? '',
-            style: GoogleFonts.inter(fontSize: 20, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+            style: AppTypography.textStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textPrimary,
+            ),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 28),
@@ -172,9 +188,17 @@ class _InviteScreenState extends State<InviteScreen> {
                 backgroundColor: AppColors.accent,
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
               ),
-              child: Text('Open FieldLog', style: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.w600)),
+              child: Text(
+                'Open FieldLog',
+                style: AppTypography.textStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
             ),
           ),
         ],
@@ -192,19 +216,29 @@ class _InviteScreenState extends State<InviteScreen> {
         const SizedBox(height: 20),
         Text(
           "You've been invited to join",
-          style: GoogleFonts.inter(fontSize: 14, color: AppColors.textSecondary),
+          style: AppTypography.textStyle(
+            fontSize: 14,
+            color: AppColors.textSecondary,
+          ),
         ),
         const SizedBox(height: 8),
         Text(
           name,
-          style: GoogleFonts.inter(fontSize: 22, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+          style: AppTypography.textStyle(
+            fontSize: 22,
+            fontWeight: FontWeight.w700,
+            color: AppColors.textPrimary,
+          ),
           textAlign: TextAlign.center,
         ),
         if (description.isNotEmpty) ...[
           const SizedBox(height: 8),
           Text(
             description,
-            style: GoogleFonts.inter(fontSize: 14, color: AppColors.textSecondary),
+            style: AppTypography.textStyle(
+              fontSize: 14,
+              color: AppColors.textSecondary,
+            ),
             textAlign: TextAlign.center,
           ),
         ],
@@ -214,29 +248,44 @@ class _InviteScreenState extends State<InviteScreen> {
           child: ElevatedButton(
             onPressed: _isAuthenticated
                 ? (_joining ? null : _accept)
-                : () => Navigator.pushNamed(context, '/login', arguments: _token),
+                : () =>
+                      Navigator.pushNamed(context, '/login', arguments: _token),
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.accent,
               foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(vertical: 14),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
             ),
             child: _joining
                 ? const SizedBox(
                     height: 20,
                     width: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
                   )
                 : Text(
                     _isAuthenticated ? 'Join Session' : 'Log in to join',
-                    style: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.w600),
+                    style: AppTypography.textStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
           ),
         ),
         const SizedBox(height: 12),
         TextButton(
           onPressed: _goHome,
-          child: Text('Not now', style: GoogleFonts.inter(fontSize: 14, color: AppColors.textTertiary)),
+          child: Text(
+            'Not now',
+            style: AppTypography.textStyle(
+              fontSize: 14,
+              color: AppColors.textTertiary,
+            ),
+          ),
         ),
       ],
     );

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:fieldlog_mobile/app_typography.dart';
 import '../../models/survey_element.dart';
 import '../../theme/app_colors.dart';
 
@@ -61,7 +61,7 @@ class _MatrixFieldWidgetState extends State<MatrixFieldWidget> {
             children: [
               Text(
                 widget.label + (widget.isRequired ? ' *' : ''),
-                style: GoogleFonts.inter(
+                style: AppTypography.textStyle(
                   fontSize: 16,
                   color: AppColors.textSecondary,
                 ),
@@ -80,7 +80,7 @@ class _MatrixFieldWidgetState extends State<MatrixFieldWidget> {
                       (col) => DataColumn(
                         label: Text(
                           col.text,
-                          style: GoogleFonts.inter(
+                          style: AppTypography.textStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.w600,
                             color: AppColors.textPrimary,
@@ -97,7 +97,7 @@ class _MatrixFieldWidgetState extends State<MatrixFieldWidget> {
                             width: 80,
                             child: Text(
                               row.text,
-                              style: GoogleFonts.inter(
+                              style: AppTypography.textStyle(
                                 fontSize: 13,
                                 color: AppColors.textPrimary,
                               ),
@@ -130,8 +130,10 @@ class _MatrixFieldWidgetState extends State<MatrixFieldWidget> {
                   padding: const EdgeInsets.only(top: 4),
                   child: Text(
                     state.errorText!,
-                    style: GoogleFonts.inter(
-                        fontSize: 12, color: AppColors.error),
+                    style: AppTypography.textStyle(
+                      fontSize: 12,
+                      color: AppColors.error,
+                    ),
                   ),
                 ),
             ],

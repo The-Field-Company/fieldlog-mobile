@@ -1,17 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:fieldlog_mobile/app_typography.dart';
 import '../../theme/app_colors.dart';
 
 class ImageFieldWidget extends StatelessWidget {
   final String imageLink;
   final String? label;
 
-  const ImageFieldWidget({
-    super.key,
-    required this.imageLink,
-    this.label,
-  });
+  const ImageFieldWidget({super.key, required this.imageLink, this.label});
 
   @override
   Widget build(BuildContext context) {
@@ -27,7 +23,7 @@ class ImageFieldWidget extends StatelessWidget {
               padding: const EdgeInsets.only(bottom: 8),
               child: Text(
                 label!,
-                style: GoogleFonts.inter(
+                style: AppTypography.textStyle(
                   fontSize: 16,
                   color: AppColors.textSecondary,
                 ),
@@ -48,8 +44,11 @@ class ImageFieldWidget extends StatelessWidget {
                 height: 100,
                 color: Colors.grey.shade100,
                 child: const Center(
-                  child: Icon(Icons.broken_image,
-                      size: 32, color: AppColors.textTertiary),
+                  child: Icon(
+                    Icons.broken_image,
+                    size: 32,
+                    color: AppColors.textTertiary,
+                  ),
                 ),
               ),
             ),

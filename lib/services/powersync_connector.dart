@@ -268,12 +268,11 @@ class FieldLogConnector extends PowerSyncBackendConnector {
 
         if (response.statusCode >= 400 && response.statusCode < 500) {
           await Sentry.captureMessage(
-            'Upload rejected (${response.statusCode}) for record $opId, skipping: ${response.body}',
+            'Upload rejected (${response.statusCode}) for record $opId, skipping',
             level: SentryLevel.error,
             withScope: (scope) {
               scope.setTag('op_id', opId);
               scope.setTag('http_status', response.statusCode.toString());
-              scope.setContexts('request_body', {'body': body});
             },
           );
           return;
