@@ -32,7 +32,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.fieldlog.fieldlog_mobile"
+        applicationId = "com.thefieldco.fieldlog"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
@@ -46,6 +46,11 @@ android {
             storeFile = keyProperties["storeFile"]?.let { file(it as String) }
             storePassword = keyProperties["storePassword"] as String?
         }
+    }
+
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
     }
 
     buildTypes {

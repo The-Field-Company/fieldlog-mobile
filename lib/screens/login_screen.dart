@@ -65,8 +65,10 @@ class _LoginScreenState extends State<LoginScreen> {
       setState(
         () => _error = 'Connection timed out. Check your server address.',
       );
+    } on AuthException catch (e) {
+      setState(() => _error = e.message);
     } catch (e) {
-      setState(() => _error = 'Invalid username or password');
+      setState(() => _error = 'Sign in failed. Please try again.');
     } finally {
       if (mounted) setState(() => _loading = false);
     }

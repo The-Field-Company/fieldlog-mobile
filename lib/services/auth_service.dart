@@ -7,6 +7,14 @@ import 'package:sentry_flutter/sentry_flutter.dart';
 import 'connectivity_service.dart';
 import 'preferences_service.dart';
 
+class AuthException implements Exception {
+  final String message;
+  AuthException(this.message);
+
+  @override
+  String toString() => message;
+}
+
 class AuthService {
   static const _accessTokenKey = 'access_token';
   static const _refreshTokenKey = 'refresh_token';
@@ -30,7 +38,7 @@ class AuthService {
     // Check lockout before attempting
     if (_loginLockedUntil != null && DateTime.now().isBefore(_loginLockedUntil!)) {
       final remaining = _loginLockedUntil!.difference(DateTime.now()).inSeconds;
-      throw Exception('Too many failed attempts. Please wait $remaining seconds before trying again.');
+      throw AuthException('Too many failed attempts. Please wait $remaining seconds before trying again.');
     }
 
     final serverUrl = await PreferencesService.getServerUrl();
@@ -49,14 +57,20 @@ class AuthService {
       throw TimeoutException('Connection timed out. Check your network and server address.');
     }
 
+    if (response.statusCode != 200 &&
+        response.statusCode != 400 &&
+        response.statusCode != 401) {
+      throw AuthException('The server is temporarily unavailable. Please try again later.');
+    }
+
     if (response.statusCode != 200) {
       _failedLoginAttempts++;
       if (_failedLoginAttempts >= _maxLoginAttempts) {
         _loginLockedUntil = DateTime.now().add(_loginLockoutDuration);
         _failedLoginAttempts = 0;
-        throw Exception('Too many failed attempts. Please wait 60 seconds before trying again.');
+        throw AuthException('Too many failed attempts. Please wait 60 seconds before trying again.');
       }
-      throw Exception('Invalid username or password');
+      throw AuthException('Invalid username or password');
     }
 
     // Success — clear any previous lockout state

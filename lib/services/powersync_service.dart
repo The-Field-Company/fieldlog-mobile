@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:path_provider/path_provider.dart';
 import 'package:powersync/powersync.dart';
@@ -9,6 +10,7 @@ import 'connectivity_service.dart';
 /// PowerSync database service mirroring ui/src/services/powersync/index.js
 class PowerSyncService {
   static PowerSyncDatabase? _db;
+  static StreamSubscription<bool>? _connectivitySubscription;
 
   static Future<PowerSyncDatabase> initPowerSync() async {
     if (_db != null) return _db!;
@@ -28,7 +30,8 @@ class PowerSyncService {
     // When the OS reports network restored, immediately trigger a PowerSync
     // reconnect instead of waiting for its own exponential-backoff timer.
     // connect() is a no-op when already connected, so this is always safe.
-    ConnectivityService.stream.listen((isOnline) {
+    await _connectivitySubscription?.cancel();
+    _connectivitySubscription = ConnectivityService.stream.listen((isOnline) {
       if (isOnline && _db != null) {
         _db!.connect(connector: FieldLogConnector());
       }
@@ -71,6 +74,8 @@ class PowerSyncService {
   }
 
   static Future<void> disconnectPowerSync() async {
+    await _connectivitySubscription?.cancel();
+    _connectivitySubscription = null;
     if (_db != null) {
       // disconnectAndClear clears all managed tables, local-only tables, and
       // the CRUD upload queue, so no stale data or pending ops carry over to

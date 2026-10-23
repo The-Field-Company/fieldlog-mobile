@@ -77,15 +77,15 @@ to F-Droid builds. Do not pass `GLITCHTIP_DSN` in the F-Droid build.
 The F-Droid build produces an unsigned APK for F-Droid to sign:
 
 ```bash
-# Replace these examples with the fixed production endpoints.
-SERVER_URL='https://api.example.org'
-POWERSYNC_URL='https://sync.example.org'
-
 flutter build apk --release \
   --android-project-arg=fdroid=true \
-  --dart-define="SERVER_URL=$SERVER_URL" \
-  --dart-define="POWERSYNC_URL=$POWERSYNC_URL"
+  --dart-define=SERVER_URL=https://fieldlog.thefieldco.com \
+  --dart-define=POWERSYNC_URL=https://fieldlog.thefieldco.com/powersync
 ```
+
+The Android application ID is `com.thefieldco.fieldlog`. APKs built before this
+change used `com.fieldlog.fieldlog_mobile`; Android treats the two as separate
+apps, so existing installs must be replaced rather than updated in place.
 
 The GitHub release workflow continues to sign its APK with the project's
 release key. F-Droid signs its APK with its own key, so an installation from
