@@ -29,24 +29,30 @@ class _FormScreenState extends State<FormScreen> {
   bool _locationReady = false;
   Map<String, int> _tallyCounts = {};
   bool _tallyCountsLoaded = false;
-  bool _sessionRefreshed = false;
+  bool _initialized = false;
+  bool _locationStarted = false;
   Map<String, dynamic>? _cachedLocation;
   DateTime? _locationCapturedAt;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    if (_initialized) return;
+    _initialized = true;
     _session = ModalRoute.of(context)!.settings.arguments as Session;
     if (_session.trackLocation) {
-      _initLocation();
+      _startLocation();
     }
     if (_session.formMode == 'tally' && !_tallyCountsLoaded) {
       _loadTallyCounts();
     }
-    if (!_sessionRefreshed) {
-      _sessionRefreshed = true;
-      _refreshSession();
-    }
+    _refreshSession();
+  }
+
+  void _startLocation() {
+    if (_locationStarted) return;
+    _locationStarted = true;
+    _initLocation();
   }
 
   Future<void> _loadTallyCounts() async {
@@ -94,6 +100,7 @@ class _FormScreenState extends State<FormScreen> {
       await PreferencesService.cacheSession(fresh);
       if (!mounted) return;
       setState(() => _session = fresh);
+      if (fresh.trackLocation) _startLocation();
     } catch (e) {
       // Offline or server error — keep using the cached session
       if (kDebugMode)
