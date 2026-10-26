@@ -1,0 +1,1 @@
+Adds how to request an account to the app description. No changes to the app itself.
