@@ -74,6 +74,12 @@ FieldLog API and PowerSync URLs as build-time values. These URLs are public
 configuration compiled into the app; GitHub Actions secrets are not available
 to F-Droid builds. Do not pass `GLITCHTIP_DSN` in the F-Droid build.
 
+F-Droid builds one APK per ABI. Their version codes are the `pubspec.yaml`
+build number × 10 + ABI (armeabi-v7a 1, arm64-v8a 2, x86_64 3), set in
+`android/app/build.gradle.kts`; universal APKs keep the plain build number.
+Add `fastlane/metadata/android/en-US/changelogs/` files named after the three
+split version codes, e.g. `31.txt`, `32.txt` and `33.txt` for build number 3.
+
 The F-Droid build produces an unsigned APK for F-Droid to sign:
 
 ```bash

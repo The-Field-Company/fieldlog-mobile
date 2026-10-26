@@ -1,0 +1,1 @@
+First F-Droid release. Changes the version numbering of the per-device builds; no changes to the app itself.
