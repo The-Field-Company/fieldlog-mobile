@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:sentry_flutter/sentry_flutter.dart';
+import 'app_version_service.dart';
 import 'connectivity_service.dart';
 import 'preferences_service.dart';
 
@@ -49,7 +50,10 @@ class AuthService {
       response = await http
           .post(
             url,
-            headers: {'Content-Type': 'application/json'},
+            headers: {
+              'Content-Type': 'application/json',
+              ...AppVersionService.headers,
+            },
             body: jsonEncode({'username': username, 'password': password}),
           )
           .timeout(_httpTimeout);
@@ -203,7 +207,10 @@ class AuthService {
       response = await http
           .post(
             url,
-            headers: {'Content-Type': 'application/json'},
+            headers: {
+              'Content-Type': 'application/json',
+              ...AppVersionService.headers,
+            },
             body: jsonEncode({'refresh': refreshToken}),
           )
           .timeout(_httpTimeout);

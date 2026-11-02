@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:powersync/powersync.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 import 'api_service.dart';
+import 'app_version_service.dart';
 import 'auth_service.dart';
 import 'preferences_service.dart';
 import 'sync_error_service.dart';
@@ -40,6 +41,7 @@ class FieldLogConnector extends PowerSyncBackendConnector {
   Future<void> uploadData(PowerSyncDatabase database) async {
     final transaction = await database.getNextCrudTransaction();
     if (transaction == null) return;
+    if (AppVersionService.updateRequired.value) return;
 
     try {
       await AuthService.ensureFreshToken();
@@ -54,6 +56,7 @@ class FieldLogConnector extends PowerSyncBackendConnector {
     final headers = {
       'Content-Type': 'application/json',
       'Authorization': 'Bearer $token',
+      ...AppVersionService.headers,
     };
 
     for (final op in transaction.crud) {
@@ -67,15 +70,20 @@ class FieldLogConnector extends PowerSyncBackendConnector {
         try {
           parsedData = jsonDecode(record?['data'] as String? ?? '{}');
         } catch (e) {
-          // H4: malformed record data — log and skip rather than silently drop.
-          // The transaction will still complete so PowerSync doesn't retry forever.
           if (kDebugMode) {
-            debugPrint('[PowerSync] Skipping record ${op.id} — malformed JSON data: $e');
+            debugPrint('[PowerSync] Keeping record ${op.id} locally — malformed JSON data: $e');
           }
           await Sentry.captureMessage(
-            'PowerSync skipped record due to malformed JSON data',
+            'PowerSync kept record locally due to malformed JSON data',
             level: SentryLevel.warning,
             withScope: (scope) => scope.setTag('op_id', op.id),
+          );
+          await _saveRejected(
+            database,
+            id: op.id,
+            sessionId: sessionId,
+            submittedBy: record?['submitted_by'],
+            data: record?['data']?.toString() ?? '',
           );
           continue;
         }
@@ -93,15 +101,29 @@ class FieldLogConnector extends PowerSyncBackendConnector {
         });
 
         // M2: retry transient failures (timeout, 5xx) with exponential backoff.
-        // Permanent failures (4xx) are reported to Sentry and skipped so they
-        // can't block the FIFO upload queue. After all retries exhausted,
-        // throw so PowerSync retries the whole transaction on the next sync cycle.
-        await _postWithRetry(
+        // Permanent failures (4xx) are reported to Sentry and kept locally in
+        // rejected_submissions so they can't block the FIFO upload queue.
+        // After all retries exhausted, throw so PowerSync retries the whole
+        // transaction on the next sync cycle.
+        final rejection = await _postWithRetry(
           opId: op.id,
           url: url,
           headers: headers,
           body: body,
         );
+
+        if (rejection != null) {
+          await _saveRejected(
+            database,
+            id: op.id,
+            sessionId: sessionId,
+            submittedBy: record?['submitted_by'],
+            data: jsonEncode(parsedData),
+            httpStatus: rejection.statusCode,
+            responseBody: rejection.body,
+          );
+          continue;
+        }
 
         for (final path in filesToDelete) {
           try {
@@ -131,7 +153,9 @@ class FieldLogConnector extends PowerSyncBackendConnector {
 
   /// POST with exponential backoff for transient errors.
   /// Retries on: network timeout, 5xx server errors.
-  /// Reports and skips on: 4xx client errors (permanent).
+  /// Throws on: 426 unsupported app version and 401, so the record stays queued.
+  /// Returns the response on other 4xx client errors (permanent) so the
+  /// caller can keep the record locally. Returns null on success.
   /// After [_maxRetries] attempts, throws to let PowerSync handle the retry.
   static const _maxRetries = 3;
   static const _binaryUploadTimeout = Duration(seconds: 120);
@@ -247,7 +271,35 @@ class FieldLogConnector extends PowerSyncBackendConnector {
     }
   }
 
-  Future<void> _postWithRetry({
+  Future<void> _saveRejected(
+    PowerSyncDatabase database, {
+    required String id,
+    required dynamic sessionId,
+    required dynamic submittedBy,
+    required String data,
+    int? httpStatus,
+    String? responseBody,
+  }) async {
+    final trimmedBody = responseBody != null && responseBody.length > 2000
+        ? responseBody.substring(0, 2000)
+        : responseBody;
+    await database.execute(
+      'INSERT OR REPLACE INTO rejected_submissions'
+      ' (id, session_id, submitted_by, data, http_status, response_body, rejected_at)'
+      ' VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [
+        id,
+        sessionId,
+        submittedBy,
+        data,
+        httpStatus,
+        trimmedBody,
+        DateTime.now().toUtc().toIso8601String(),
+      ],
+    );
+  }
+
+  Future<http.Response?> _postWithRetry({
     required String opId,
     required Uri url,
     required Map<String, String> headers,
@@ -264,18 +316,26 @@ class FieldLogConnector extends PowerSyncBackendConnector {
             .timeout(_httpTimeout);
 
         // 200 = idempotent duplicate, 201 = new, 409 = conflict (also OK)
-        if (response.ok || response.statusCode == 409) return;
+        if (response.ok || response.statusCode == 409) return null;
+
+        if (AppVersionService.handleResponse(response.statusCode, response.body)) {
+          throw Exception('App version unsupported, upload paused for record $opId');
+        }
+
+        if (response.statusCode == 401) {
+          throw Exception('Upload unauthorized (401) for record $opId. Will retry on next sync.');
+        }
 
         if (response.statusCode >= 400 && response.statusCode < 500) {
           await Sentry.captureMessage(
-            'Upload rejected (${response.statusCode}) for record $opId, skipping',
+            'Upload rejected (${response.statusCode}) for record $opId, kept on device',
             level: SentryLevel.error,
             withScope: (scope) {
               scope.setTag('op_id', opId);
               scope.setTag('http_status', response.statusCode.toString());
             },
           );
-          return;
+          return response;
         }
 
         // 5xx = transient server error — fall through to retry logic below
@@ -419,6 +479,10 @@ class FieldLogConnector extends PowerSyncBackendConnector {
               response.statusCode == 204 ||
               (isDelete && response.statusCode == 404)) {
             return;
+          }
+
+          if (AppVersionService.handleResponse(response.statusCode, response.body)) {
+            throw Exception('App version unsupported, subscription upload paused for op $opId');
           }
 
           if (response.statusCode >= 400 && response.statusCode < 500) {

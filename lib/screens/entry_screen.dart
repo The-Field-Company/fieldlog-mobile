@@ -4,6 +4,7 @@ import 'package:fieldlog_mobile/app_typography.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 import '../theme/app_colors.dart';
 import '../models/session.dart';
+import '../services/app_version_service.dart';
 import '../services/auth_service.dart';
 import '../services/preferences_service.dart';
 import '../services/powersync_service.dart';
@@ -67,7 +68,81 @@ class _EntryScreenState extends State<EntryScreen> {
         });
   }
 
+  Future<bool> _confirmLogoutWithUnsynced() async {
+    final count = await PowerSyncService.countUnsyncedRecords();
+    if (count == 0 || !mounted) return true;
+    final records = count == 1 ? '1 record' : '$count records';
+    final confirmed = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: AppColors.primaryBg,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(32, 24, 32, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Icon(
+                Icons.cloud_off_outlined,
+                size: 32,
+                color: Colors.orange.shade700,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Records not uploaded yet',
+                textAlign: TextAlign.center,
+                style: AppTypography.textStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '$records on this device ${count == 1 ? 'has' : 'have'} not '
+                'been uploaded. Logging out now will delete '
+                '${count == 1 ? 'it' : 'them'}. Connect to the internet and '
+                'wait for syncing to finish first.',
+                textAlign: TextAlign.center,
+                style: AppTypography.textStyle(
+                  fontSize: 15,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 24),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Stay signed in'),
+              ),
+              const SizedBox(height: 4),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                style: TextButton.styleFrom(
+                  foregroundColor: AppColors.error,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+                child: Text(
+                  'Log out and delete $records',
+                  style: AppTypography.textStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                    color: AppColors.error,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    return confirmed ?? false;
+  }
+
   Future<void> _logout() async {
+    if (!await _confirmLogoutWithUnsynced()) return;
     // disconnectAndClear() wipes all managed tables, local-only tables, and the
     // CRUD upload queue — no manual DELETE needed and no stale data or pending
     // ops carry over to the next user on this device.
@@ -154,6 +229,70 @@ class _EntryScreenState extends State<EntryScreen> {
                     ),
                   ),
                   const SizedBox(height: 32),
+
+                  ValueListenableBuilder<bool>(
+                    valueListenable: AppVersionService.updateAvailable,
+                    builder: (context, available, _) {
+                      if (!available) return const SizedBox.shrink();
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 16),
+                        child: InkWell(
+                          onTap: AppVersionService.openUpdatePage,
+                          borderRadius: BorderRadius.circular(8),
+                          child: Container(
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              border: Border.all(color: AppColors.borderColor),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(
+                                  Icons.system_update_outlined,
+                                  size: 20,
+                                  color: AppColors.accent,
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Update available',
+                                        style: AppTypography.textStyle(
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w600,
+                                          color: AppColors.textPrimary,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        'A new version of FieldLog is ready.',
+                                        style: AppTypography.textStyle(
+                                          fontSize: 13,
+                                          color: AppColors.textSecondary,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  'Update',
+                                  style: AppTypography.textStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.accent,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
 
                   // Continue previous session shortcut
                   if (_cachedSession != null) ...[

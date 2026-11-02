@@ -34,4 +34,12 @@ const schema = Schema([
     Column.integer('is_public'),
     Column.text('created_at'),
   ]),
+  Table.localOnly('rejected_submissions', [
+    Column.integer('session_id'),
+    Column.text('submitted_by'),
+    Column.text('data'),
+    Column.integer('http_status'),
+    Column.text('response_body'),
+    Column.text('rejected_at'),
+  ]),
 ]);
