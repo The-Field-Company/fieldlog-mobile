@@ -169,66 +169,54 @@ class _SyncStatusTextState extends State<SyncStatusText> {
   StreamSubscription<bool>? _connectivitySubscription;
   StreamSubscription<SyncStatus>? _psSubscription;
   bool _connected = false;
-  bool _uploading = false;
-  // True once upload is confirmed done. Set either by observing the
-  // uploading→done transition via the stream, or — to fix the race where the
-  // upload completes before this screen renders — by finding ps_crud empty on
-  // mount.
+  bool _uploadFailed = false;
   bool _uploadConfirmed = false;
+  bool _rejected = false;
+  int? _rejectedBaseline;
 
   @override
   void initState() {
     super.initState();
 
-    // 1. Device-level connectivity — drives the offline/online display.
     _connected = ConnectivityService.isOnline;
     _connectivitySubscription = ConnectivityService.stream.listen((isOnline) {
       if (!mounted) return;
       setState(() => _connected = isOnline);
+      _refresh();
     });
 
-    // 2. PowerSync stream — drives uploading state and upload confirmation.
     final db = PowerSyncService.getPowerSync();
     if (db != null) {
-      _uploading = db.currentStatus.uploading;
-
-      // If connected and idle on mount the upload may have already finished
-      // before this screen rendered (fast network / fast server). Check the
-      // CRUD queue directly rather than waiting for a transition that already
-      // happened and will never fire again.
-      if (_connected && !_uploading) {
-        _checkPendingCrud(db);
-      }
-
+      _uploadFailed = db.currentStatus.uploadError != null;
       _psSubscription = db.statusStream.listen((status) {
         if (!mounted) return;
-        final wasUploading = _uploading;
-        setState(() {
-          _uploading = status.uploading;
-          // Use status.connected (PowerSync WebSocket) here rather than
-          // _connected (device level) so confirmation is tied to the actual
-          // upload completing on the PowerSync service, not just device state.
-          if (wasUploading && !status.uploading && status.connected) {
-            _uploadConfirmed = true;
-          }
-        });
+        setState(() => _uploadFailed = status.uploadError != null);
+        _refresh();
       });
     }
+    _refresh();
   }
 
-  /// Queries the PowerSync CRUD queue. If it is empty while connected and
-  /// idle, the upload completed before this widget mounted.
-  Future<void> _checkPendingCrud(PowerSyncDatabase db) async {
+  Future<void> _refresh() async {
+    if (_uploadConfirmed || _rejected) return;
+    final db = PowerSyncService.getPowerSync();
+    if (db == null) return;
     try {
-      final rows = await db.getAll('SELECT id FROM ps_crud LIMIT 1');
-      // Bail out if state changed while the query was in flight.
-      if (!mounted || _uploadConfirmed || _uploading) return;
-      if (rows.isEmpty) {
+      final pending = await db.get(
+        "SELECT COUNT(*) AS n FROM ps_crud"
+        " WHERE json_extract(data, '\$.type') = 'fieldlog_submission'",
+      );
+      final rejected =
+          await db.get('SELECT COUNT(*) AS n FROM rejected_submissions');
+      final rejectedCount = rejected['n'] as int;
+      _rejectedBaseline ??= rejectedCount;
+      if (!mounted || _uploadConfirmed || _rejected) return;
+      if (rejectedCount > _rejectedBaseline!) {
+        setState(() => _rejected = true);
+      } else if (pending['n'] == 0) {
         setState(() => _uploadConfirmed = true);
       }
-    } catch (_) {
-      // ps_crud inaccessible (SDK change) — stream-based detection still active.
-    }
+    } catch (_) {}
   }
 
   @override
@@ -245,19 +233,22 @@ class _SyncStatusTextState extends State<SyncStatusText> {
     late final Color color;
 
     if (_uploadConfirmed) {
-      // Terminal state: upload is done regardless of current connectivity.
-      // Must be checked first — going offline after a confirmed upload does
-      // not invalidate the upload.
       icon = Icons.cloud_done_outlined;
       text = 'Uploaded to server';
       color = AppColors.accent;
+    } else if (_rejected) {
+      icon = Icons.error_outline;
+      text = 'Saved locally \u2014 not accepted by the server';
+      color = Colors.orange.shade700;
     } else if (!_connected) {
       icon = Icons.cloud_queue_outlined;
       text = 'Saved locally \u2014 will upload when online';
       color = Colors.orange.shade700;
+    } else if (_uploadFailed) {
+      icon = Icons.cloud_queue_outlined;
+      text = 'Saved locally \u2014 upload will retry';
+      color = Colors.orange.shade700;
     } else {
-      // Covers both: actively uploading, and pending (connected but PowerSync
-      // hasn't started the cycle yet). Both correctly read as "in progress".
       icon = Icons.cloud_upload_outlined;
       text = 'Uploading to server...';
       color = AppColors.accentLight;
@@ -269,7 +260,13 @@ class _SyncStatusTextState extends State<SyncStatusText> {
       children: [
         Icon(icon, size: 14, color: color),
         const SizedBox(width: 6),
-        Text(text, style: AppTypography.textStyle(fontSize: 13, color: color)),
+        Flexible(
+          child: Text(
+            text,
+            textAlign: TextAlign.center,
+            style: AppTypography.textStyle(fontSize: 13, color: color),
+          ),
+        ),
       ],
     );
   }

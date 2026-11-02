@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:sentry_flutter/sentry_flutter.dart';
 import '../models/session.dart';
+import 'app_version_service.dart';
 import 'preferences_service.dart';
 import 'auth_service.dart';
 
@@ -19,12 +20,24 @@ class ApiService {
   static const _httpTimeout = Duration(seconds: 30);
 
   static Future<Map<String, String>> _authHeaders() async {
-    final headers = <String, String>{'Accept': 'application/json'};
+    final headers = <String, String>{
+      'Accept': 'application/json',
+      ...AppVersionService.headers,
+    };
     final token = await AuthService.getToken();
     if (token != null) {
       headers['Authorization'] = 'Bearer $token';
     }
     return headers;
+  }
+
+  static void _guard(http.Response response) {
+    if (AppVersionService.handleResponse(response.statusCode, response.body)) {
+      throw ApiException(
+        'This version of FieldLog is no longer supported. Please update the app.',
+        statusCode: 426,
+      );
+    }
   }
 
   static Future<Session> getSession(String sessionId) async {
@@ -42,6 +55,8 @@ class ApiService {
     } finally {
       client.close();
     }
+
+    _guard(response);
 
     if (response.statusCode == 404) {
       throw ApiException('Session not found. Please check the session ID and try again.', statusCode: 404);
@@ -76,6 +91,8 @@ class ApiService {
       client.close();
     }
 
+    _guard(response);
+
     if (response.statusCode == 401 || response.statusCode == 403) {
       throw ApiException('Authentication required.', statusCode: response.statusCode);
     }
@@ -106,6 +123,8 @@ class ApiService {
       client.close();
     }
 
+    _guard(response);
+
     if (response.statusCode >= 500) {
       throw ApiException('The server is temporarily unavailable. Please try again later.', statusCode: response.statusCode);
     }
@@ -132,6 +151,8 @@ class ApiService {
     } finally {
       client.close();
     }
+
+    _guard(response);
 
     if (response.statusCode == 403) {
       throw ApiException('This session is not open for subscriptions.', statusCode: 403);
@@ -176,6 +197,8 @@ class ApiService {
     } finally {
       client.close();
     }
+
+    _guard(response);
 
     if (response.statusCode == 401 || response.statusCode == 403) {
       throw ApiException('Upload not authorized.', statusCode: response.statusCode);
@@ -222,6 +245,8 @@ class ApiService {
       client.close();
     }
 
+    _guard(response);
+
     if (response.statusCode == 401 || response.statusCode == 403) {
       throw ApiException('Upload not authorized.', statusCode: response.statusCode);
     }
@@ -252,6 +277,8 @@ class ApiService {
       client.close();
     }
 
+    _guard(response);
+
     if (response.statusCode == 404) throw ApiException('Invalid invite link.', statusCode: 404);
     if (response.statusCode == 410) throw ApiException('This invite link has expired.', statusCode: 410);
     if (response.statusCode != 200) throw ApiException('Something went wrong.', statusCode: response.statusCode);
@@ -274,6 +301,8 @@ class ApiService {
     } finally {
       client.close();
     }
+
+    _guard(response);
 
     if (response.statusCode == 401 || response.statusCode == 403) {
       throw ApiException('Authentication required.', statusCode: response.statusCode);
@@ -302,6 +331,8 @@ class ApiService {
       client.close();
     }
 
+    _guard(response);
+
     if (response.statusCode >= 500) {
       throw ApiException('The server is temporarily unavailable. Please try again later.', statusCode: response.statusCode);
     }
@@ -327,6 +358,7 @@ class ApiService {
             headers: {
               'Content-Type': 'application/json',
               'Accept': 'application/json',
+              ...AppVersionService.headers,
             },
             body: jsonEncode({
               'submitted_by': submittedBy,
@@ -339,6 +371,8 @@ class ApiService {
     } finally {
       client.close();
     }
+
+    _guard(response);
 
     if (response.statusCode == 401 || response.statusCode == 403) {
       throw ApiException('This session is no longer accepting public submissions.', statusCode: response.statusCode);
