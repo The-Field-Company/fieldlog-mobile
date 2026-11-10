@@ -1,0 +1,47 @@
+services:
+  android-emulator:
+    # budtmo/docker-android ships a noVNC web UI built in, so the emulator can
+    # be seen and controlled from a browser at http://<host>:6080 — no separate
+    # screen-cast bridge is needed.
+    image: budtmo/docker-android:emulator_14.0
+    entrypoint: ["/bin/bash", "/opt/forward.sh"]
+    ports:
+      - "6080:6080" # noVNC web UI
+      - "5554:5554" # emulator console
+      - "5555:5555" # adb
+    environment:
+      EMULATOR_DEVICE: "Samsung Galaxy S10"
+      WEB_VNC: "true"
+      # The Android guest reaches this container's loopback via 10.0.2.2. The
+      # entrypoint forwards these ports to the host so the app's default URLs
+      # keep reaching services running there.
+      BACKEND_HOST: host.docker.internal
+      BACKEND_PORTS: "${BACKEND_PORTS:-8000 8080 8090}"
+    devices:
+      - /dev/kvm:/dev/kvm
+    group_add:
+      # Supplementary group for /dev/kvm so the container's non-root user can
+      # use hardware acceleration. Override with KVM_GID if it differs.
+      - "${KVM_GID:-992}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./docker/emulator-entrypoint.sh:/opt/forward.sh:ro
+
+  flutter-run:
+    image: ghcr.io/cirruslabs/flutter:3.38.7
+    entrypoint: ["/bin/bash", "/app/docker/run.sh"]
+    depends_on:
+      - android-emulator
+    environment:
+      EMULATOR_HOST: android-emulator
+      PUB_CACHE: /cache/pub
+      GRADLE_USER_HOME: /cache/gradle
+    volumes:
+      - .:/app
+      - flutter-cache:/cache
+    tty: true
+    stdin_open: true
+
+volumes:
+  flutter-cache:
