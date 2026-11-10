@@ -43,8 +43,9 @@ class _LoginScreenState extends State<LoginScreen> {
         final subscriptions = await ApiService.getSubscriptions();
         await PowerSyncService.seedSessions(subscriptions);
       } catch (e) {
-        if (kDebugMode)
+        if (kDebugMode) {
           debugPrint('[Seed] subscription seed failed after login: $e');
+        }
       }
       if (!mounted) return;
       final pendingInviteToken =
