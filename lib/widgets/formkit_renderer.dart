@@ -9,6 +9,7 @@ import 'field_widgets/checkbox_field_widget.dart';
 import 'field_widgets/slider_field_widget.dart';
 import 'field_widgets/date_field_widget.dart';
 import 'field_widgets/time_field_widget.dart';
+import 'field_widgets/file_field_widget.dart';
 
 class FormkitRenderer extends StatefulWidget {
   final List<dynamic> components;
@@ -147,8 +148,19 @@ class _FormkitRendererState extends State<FormkitRenderer> {
           label: comp.label,
           onChanged: (v) => _data[comp.key] = v,
         );
-      case 'color':
       case 'file':
+        return FileFieldWidget(
+          label: comp.label,
+          isRequired: comp.isRequired,
+          onChanged: (v) {
+            if (v == null) {
+              _data.remove(comp.key);
+            } else {
+              _data[comp.key] = v;
+            }
+          },
+        );
+      case 'color':
       case 'password':
         // M5: render a visible placeholder so users know a field is present but
         // not supported in mobile FormKit mode, rather than silently hiding it.
