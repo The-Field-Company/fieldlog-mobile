@@ -37,6 +37,36 @@ flutter run --dart-define-from-file=.env.json -d <device-id>
 For the Android emulator, use `10.0.2.2` to reach services running on the host;
 the example config contains these defaults.
 
+## Docker
+
+Run the app on an Android emulator in Docker and drive it from a browser, with
+the app built and installed by a matching Flutter container:
+
+```bash
+cp .env.json.example .env.json   # use http://10.0.2.2:<port> URLs
+docker compose up -d
+```
+
+The `android-emulator` service runs the [budtmo/docker-android](https://github.com/budtmo/docker-android)
+emulator (Android 14 / API 34) with its built-in noVNC web UI. Open
+**http://stacey:6080** in a browser to see and control the emulator — no
+separate screen-cast client is needed. The `flutter-run` service connects over
+ADB, waits for boot, then `flutter run`s the app onto it.
+
+The emulator forwards the backend ports so the app's `10.0.2.2` URLs reach
+services running on the host.
+
+Requirements:
+
+- Linux with a working `/dev/kvm` (the emulator needs KVM; Docker Desktop on
+  macOS/Windows does not expose it). If the `kvm` group differs from `992`,
+  set `KVM_GID`.
+- ~4 GB free disk for the pre-built emulator image.
+
+Configurable via environment variables: `KVM_GID` (host `kvm` group id) and
+`BACKEND_PORTS` (space-separated list of host ports to forward, default
+`8000 8080 8090`).
+
 ## GitHub Actions
 
 Android branch builds and tagged releases use repository Actions secrets:
