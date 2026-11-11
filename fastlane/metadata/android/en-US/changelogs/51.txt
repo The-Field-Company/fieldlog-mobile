@@ -1,0 +1,1 @@
+Photos can now be added in simple forms.
