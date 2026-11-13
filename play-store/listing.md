@@ -4,6 +4,10 @@ Text to paste into Play Console → Grow users → Store presence → Main store
 listing. F-Droid reads its own text from `fastlane/metadata/android/en-US/`;
 keep the two in step when features change.
 
+Play rules for this text: no client, partner or competitor names, no
+testimonials or rankings ("best", "#1"), no prices or promotions, no
+keyword lists, and every feature described must be in the app.
+
 ## App name (max 30 characters)
 
 ```
@@ -37,10 +41,16 @@ JOIN YOUR TEAM'S SESSIONS
 Browse public sessions and join them, or open an invite link from your team to join a private one.
 
 ACCOUNTS
-FieldLog needs a FieldLog account. There is no sign-up inside the app: accounts are created by The Field Company. You can request one at https://fieldlog.thefieldco.com/request-access
+FieldLog needs a FieldLog account. There is no sign-up inside the app: accounts are set up for your team. You can request one at https://fieldlog.thefieldco.com/request-access
 
 PRIVACY
 FieldLog has no ads and no analytics. Privacy policy: https://fieldlog.thefieldco.com/privacy
+```
+
+## What's new (first release, max 500 characters)
+
+```
+First release on Google Play. Record forms and tally counts offline, with automatic upload when you are back in signal.
 ```
 
 ## Other store settings
@@ -50,6 +60,7 @@ FieldLog has no ads and no analytics. Privacy policy: https://fieldlog.thefieldc
 | App or game | App |
 | Free or paid | Free |
 | Category | Productivity |
+| Tags | Pick from Play's list: Productivity, Tools, Science (only those that apply) |
 | Contact email | engineering@thefieldco.com |
 | Website | https://thefieldco.com |
 | Privacy policy | https://fieldlog.thefieldco.com/privacy |
@@ -63,9 +74,20 @@ FieldLog has no ads and no analytics. Privacy policy: https://fieldlog.thefieldc
 | Feature graphic | `feature-graphic.png` | 1024 × 500, PNG without alpha |
 | Phone screenshots | `screenshots/1.png` … `7.png` | 2–8, longest side at most twice the shortest, no alpha |
 
-The screenshots are the F-Droid screenshots with the phone status bar removed
-and the sides widened by repeating the edge background, so they fit Play's
-2:1 limit.
+Upload the screenshots in this order:
+
+| File | Shows |
+|---|---|
+| `1.png` | Sign-in screen |
+| `2.png` | Home screen with sessions and the Online badge |
+| `3.png` | Tally board with picture buttons and running totals |
+| `4.png` | Multi-page form, page 1: choices, dropdowns and a switch |
+| `5.png` | Multi-page form, page 2: star rating, slider and photo field |
+| `6.png` | Patrol report with date picker, dropdowns and radio buttons |
+| `7.png` | Offline: "Saved locally, will upload when online" |
+
+They are 1116 × 2231 with no alpha: the phone status bar is cropped off and
+18 px of white is added to each side, so they fit Play's 2:1 limit.
 
 ## App access (for Google's reviewers)
 
