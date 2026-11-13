@@ -8,6 +8,7 @@ import '../services/auth_service.dart';
 import '../services/preferences_service.dart';
 import '../services/powersync_service.dart';
 import '../services/connectivity_service.dart';
+import '../widgets/privacy_policy_link.dart';
 import '../widgets/sync_status_widget.dart';
 
 class EntryScreen extends StatefulWidget {
@@ -260,6 +261,8 @@ class _EntryScreenState extends State<EntryScreen> {
                     ),
 
                   const SizedBox(height: 32),
+                  const PrivacyPolicyLink(),
+                  const SizedBox(height: 8),
                 ],
               ),
             ),

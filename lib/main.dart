@@ -6,7 +6,6 @@ import 'package:sentry_flutter/sentry_flutter.dart';
 import 'theme/app_theme.dart';
 import 'screens/login_screen.dart';
 import 'screens/entry_screen.dart';
-import 'screens/settings_screen.dart';
 import 'screens/form_screen.dart';
 import 'screens/success_screen.dart';
 import 'screens/browse_sessions_screen.dart';
@@ -142,7 +141,6 @@ class _FieldLogAppState extends State<FieldLogApp> {
       routes: {
         '/login': (context) => const LoginScreen(),
         '/': (context) => const EntryScreen(),
-        '/settings': (context) => const SettingsScreen(),
         '/form': (context) => const FormScreen(),
         '/success': (context) => const SuccessScreen(),
         '/browse': (context) => const BrowseSessionsScreen(),

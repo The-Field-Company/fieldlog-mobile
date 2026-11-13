@@ -24,6 +24,27 @@ import UIKit
         }
         bridge.handle(call, result: result)
       }
+
+      let linksChannel = FlutterMethodChannel(
+        name: "com.fieldlog/links",
+        binaryMessenger: controller.binaryMessenger
+      )
+      linksChannel.setMethodCallHandler { call, result in
+        guard call.method == "openUrl" else {
+          result(FlutterMethodNotImplemented)
+          return
+        }
+        guard
+          let arguments = call.arguments as? [String: Any],
+          let value = arguments["url"] as? String,
+          let url = URL(string: value),
+          url.scheme == "https"
+        else {
+          result(false)
+          return
+        }
+        UIApplication.shared.open(url) { opened in result(opened) }
+      }
     }
 
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)

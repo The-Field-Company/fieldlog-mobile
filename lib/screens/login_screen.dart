@@ -7,6 +7,7 @@ import '../theme/app_colors.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
 import '../services/powersync_service.dart';
+import '../widgets/privacy_policy_link.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -165,6 +166,10 @@ class _LoginScreenState extends State<LoginScreen> {
                   ],
                 ),
               ),
+            ),
+            const Padding(
+              padding: EdgeInsets.only(bottom: 8),
+              child: PrivacyPolicyLink(),
             ),
           ],
         ),

@@ -25,7 +25,6 @@ flutter run --dart-define-from-file=.env.json
 ```
 
 `.env.json` is ignored by Git. Do not commit local environment configuration.
-In debug builds, the app's Settings screen can also override the service URLs.
 
 For a USB-connected Android device, enable USB debugging and run:
 
@@ -55,6 +54,14 @@ installs so users can install updates over them.
 
 Push a `v*` tag to build and publish a signed APK release. Branch builds are
 available as Actions artifacts and expire after 30 days.
+
+The same tag also builds the Google Play bundle, which needs four more
+secrets (see [Google Play](#google-play)):
+
+- `UPLOAD_KEYSTORE_BASE64`
+- `UPLOAD_KEYSTORE_PASSWORD`
+- `UPLOAD_KEY_ALIAS`
+- `UPLOAD_KEY_PASSWORD`
 
 ## Local Android release build
 
@@ -97,3 +104,44 @@ The GitHub release workflow continues to sign its APK with the project's
 release key. F-Droid signs its APK with its own key, so an installation from
 one channel cannot be updated directly by the other channel unless upstream
 signature reproducibility is configured.
+
+## Google Play
+
+Google Play takes an Android App Bundle (AAB) signed with an upload key;
+Google then signs the APKs it delivers with the app signing key held by Play
+App Signing. The upload key is separate from the release key above and must
+never be committed.
+
+Create the upload key once, outside the repository:
+
+```bash
+keytool -genkeypair -v -keystore upload-keystore.jks -storetype PKCS12 \
+  -alias upload -keyalg RSA -keysize 4096 -validity 10000
+base64 -i upload-keystore.jks | pbcopy
+```
+
+Store the copied value as `UPLOAD_KEYSTORE_BASE64`, plus
+`UPLOAD_KEYSTORE_PASSWORD`, `UPLOAD_KEY_ALIAS` (`upload`) and
+`UPLOAD_KEY_PASSWORD`. Use letters and digits only in the passwords, because
+they are written into a Java properties file. Keep a backup of the keystore
+and passwords outside this repository.
+
+Pushing a `v*` tag runs `.github/workflows/release-play.yml`. It fails before
+building if the tag does not match the `pubspec.yaml` version or a secret is
+missing, and after building if the bundle is not signed with the upload key
+or its version code differs from the `pubspec.yaml` build number. The bundle
+is kept as an Actions artifact for 90 days; download it and upload it in Play
+Console.
+
+Unlike the F-Droid split APKs, the bundle's version code is the plain
+`pubspec.yaml` build number. Play requires every upload to have a higher
+version code than the last one.
+
+Store listing text, graphics and Data safety answers are in `play-store/`.
+F-Droid does not read that folder.
+
+F-Droid installs are always signed with F-Droid's key. The Play app signing
+key is chosen when the app is first set up in Play Console: if it is the
+release key above, GitHub installs can update from Play; otherwise they
+cannot. Users moving between differently signed builds must uninstall first,
+which deletes records that have not synced yet.

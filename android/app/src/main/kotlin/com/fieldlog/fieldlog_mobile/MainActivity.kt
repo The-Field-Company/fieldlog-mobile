@@ -19,6 +19,7 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     companion object {
         private const val CHANNEL = "com.fieldlog/location"
+        private const val LINKS_CHANNEL = "com.fieldlog/links"
         private const val LOCATION_PERMISSION_REQUEST = 7402
         private const val LOCATION_TIMEOUT_MS = 10_000L
         private const val FUSED_PROVIDER = "fused"
@@ -46,6 +47,25 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, LINKS_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "openUrl" -> result.success(openUrl(call.argument<String>("url")))
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    private fun openUrl(url: String?): Boolean {
+        val uri = url?.let(Uri::parse) ?: return false
+        if (uri.scheme != "https") return false
+        return try {
+            startActivity(Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE))
+            true
+        } catch (_: Exception) {
+            false
+        }
     }
 
     private fun isLocationServiceEnabled(): Boolean {
