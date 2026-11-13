@@ -1,0 +1,1 @@
+Adds a link to the privacy policy on the sign-in and home screens. Diagnostics can no longer be turned on, so the app sends no error reports.
