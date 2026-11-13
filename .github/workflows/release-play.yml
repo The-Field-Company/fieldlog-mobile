@@ -1,0 +1,128 @@
+name: Play Store Bundle
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build signed AAB
+    runs-on: ubuntu-latest
+
+    env:
+      UPLOAD_KEYSTORE_BASE64: ${{ secrets.UPLOAD_KEYSTORE_BASE64 }}
+      UPLOAD_KEYSTORE_PASSWORD: ${{ secrets.UPLOAD_KEYSTORE_PASSWORD }}
+      UPLOAD_KEY_ALIAS: ${{ secrets.UPLOAD_KEY_ALIAS }}
+      UPLOAD_KEY_PASSWORD: ${{ secrets.UPLOAD_KEY_PASSWORD }}
+      SERVER_URL: ${{ secrets.SERVER_URL }}
+      POWERSYNC_URL: ${{ secrets.POWERSYNC_URL }}
+      GLITCHTIP_DSN: ${{ secrets.GLITCHTIP_DSN }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check tag matches pubspec version
+        run: |
+          pubspec_version=$(sed -n 's/^version:[[:space:]]*//p' pubspec.yaml)
+          version_name=${pubspec_version%%+*}
+          build_number=${pubspec_version#*+}
+          if [ "v$version_name" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match pubspec version $version_name"
+            exit 1
+          fi
+          case "$build_number" in
+            ''|*[!0-9]*)
+              echo "::error::pubspec version $pubspec_version has no numeric build number"
+              exit 1
+              ;;
+          esac
+          echo "BUILD_NUMBER=$build_number" >> "$GITHUB_ENV"
+
+      - name: Check required secrets
+        run: |
+          missing=0
+          for name in UPLOAD_KEYSTORE_BASE64 UPLOAD_KEYSTORE_PASSWORD UPLOAD_KEY_ALIAS UPLOAD_KEY_PASSWORD SERVER_URL POWERSYNC_URL; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing repository secret $name"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.38.7'
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Write .env.json
+        run: |
+          jq -n \
+            --arg server "$SERVER_URL" \
+            --arg powersync "$POWERSYNC_URL" \
+            --arg dsn "$GLITCHTIP_DSN" \
+            '{SERVER_URL: $server, POWERSYNC_URL: $powersync, GLITCHTIP_DSN: $dsn}' > .env.json
+
+      - name: Write upload key
+        run: |
+          keystore="$RUNNER_TEMP/upload-keystore.jks"
+          printf '%s' "$UPLOAD_KEYSTORE_BASE64" | base64 --decode > "$keystore"
+          {
+            printf 'storePassword=%s\n' "$UPLOAD_KEYSTORE_PASSWORD"
+            printf 'keyPassword=%s\n' "$UPLOAD_KEY_PASSWORD"
+            printf 'keyAlias=%s\n' "$UPLOAD_KEY_ALIAS"
+            printf 'storeFile=%s\n' "$keystore"
+          } > android/key.properties
+          echo "UPLOAD_KEYSTORE=$keystore" >> "$GITHUB_ENV"
+
+      - name: Build release AAB
+        run: flutter build appbundle --release --dart-define-from-file=.env.json
+
+      - name: Verify AAB signature and version
+        run: |
+          aab=build/app/outputs/bundle/release/app-release.aab
+          expected=$(keytool -list -v -keystore "$UPLOAD_KEYSTORE" -storepass "$UPLOAD_KEYSTORE_PASSWORD" -alias "$UPLOAD_KEY_ALIAS" \
+            | sed -n 's/^[[:space:]]*SHA256: //p' | head -n 1)
+          actual=$(keytool -printcert -jarfile "$aab" | sed -n 's/^[[:space:]]*SHA256: //p' | head -n 1)
+          if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+            echo "::error::AAB is not signed with the upload key (expected $expected, got ${actual:-none})"
+            exit 1
+          fi
+          aapt2=$(find "$ANDROID_HOME/build-tools" -mindepth 2 -maxdepth 2 -name aapt2 | sort -V | tail -n 1)
+          if [ -z "$aapt2" ]; then
+            echo "::error::aapt2 not found in $ANDROID_HOME/build-tools"
+            exit 1
+          fi
+          manifest_dir="$RUNNER_TEMP/aab-manifest"
+          rm -rf "$manifest_dir" && mkdir -p "$manifest_dir"
+          unzip -q -j "$aab" base/manifest/AndroidManifest.xml base/resources.pb -d "$manifest_dir"
+          (cd "$manifest_dir" && zip -q base.apk AndroidManifest.xml resources.pb)
+          version_code=$("$aapt2" dump xmltree --file AndroidManifest.xml "$manifest_dir/base.apk" \
+            | sed -n 's/.*android:versionCode([^)]*)=\([0-9]*\).*/\1/p' | head -n 1)
+          if [ "$version_code" != "$BUILD_NUMBER" ]; then
+            echo "::error::AAB versionCode $version_code does not match pubspec build number $BUILD_NUMBER"
+            exit 1
+          fi
+          echo "Signed with upload key $actual, versionCode $version_code"
+          mv "$aab" "build/app/outputs/bundle/release/FieldLog-$GITHUB_REF_NAME.aab"
+
+      - name: Remove signing files
+        if: always()
+        run: rm -f android/key.properties "$RUNNER_TEMP/upload-keystore.jks" .env.json
+
+      - name: Upload AAB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FieldLog-${{ github.ref_name }}-play
+          path: build/app/outputs/bundle/release/FieldLog-${{ github.ref_name }}.aab
+          retention-days: 90
+          if-no-files-found: error

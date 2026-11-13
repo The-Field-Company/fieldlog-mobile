@@ -4,4 +4,4 @@ Open available sessions, record field observations, and continue working when of
 
 A FieldLog account and the service configured for this build are required. There is no in-app sign-up: accounts are created by The Field Company, and you can request one at https://fieldlog.thefieldco.com/request-access. The service endpoint is fixed by the build; users cannot select another server. Location access is requested only when a session uses location capture.
 
-In builds that configure diagnostics, sharing is opt-in and off by default.
+FieldLog has no ads or analytics and does not send diagnostics from your device.
