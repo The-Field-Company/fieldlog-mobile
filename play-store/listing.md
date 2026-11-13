@@ -63,9 +63,11 @@ FieldLog has no ads and no analytics. Privacy policy: https://fieldlog.thefieldc
 | Feature graphic | `feature-graphic.png` | 1024 × 500, PNG without alpha |
 | Phone screenshots | `screenshots/1.png` … `7.png` | 2–8, longest side at most twice the shortest, no alpha |
 
-The screenshots are the F-Droid screenshots with the phone status bar removed
-and the sides widened by repeating the edge background, so they fit Play's
-2:1 limit.
+The screenshots were taken on a phone with the Atherstone demo sessions:
+home, Game Count tally, Rhino Monitoring (two pages), Patrol report, a report
+filled in offline, and the "saved locally" confirmation. The phone status bar
+is cropped off and 18 px of white added to each side, so they fit Play's 2:1
+limit.
 
 ## App access (for Google's reviewers)
 
