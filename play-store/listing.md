@@ -11,51 +11,40 @@ keyword lists, and every feature described must be in the app.
 ## App name (max 30 characters)
 
 ```
-FieldLog: Offline Field Data
+FieldLog
 ```
 
 ## Short description (max 80 characters)
 
 ```
-Record wildlife sightings, patrols and surveys in the field, even with no signal
+Offline-first field data collection for research and conservation teams
 ```
 
 ## Full description (max 4000 characters)
 
 ```
-FieldLog is a data collection app for teams who work outdoors: rangers, ecologists, monitors and survey crews. Record what you see on the ground, with or without a signal. Your records are saved on your phone first and upload by themselves when you are back in coverage.
+FieldLog is a field data collection app for research and conservation teams. Record observations on the ground, with or without a signal, and they sync to your team's FieldLog sessions when you are back online.
 
-WORKS WITHOUT SIGNAL
-• Every record is saved on the phone the moment you submit it
-• Uploads start automatically when a connection returns, including photos
-• An Online / Offline badge shows your connection at a glance
-• After each submission FieldLog tells you whether it was uploaded or saved on the phone to upload later
+WORKS OFFLINE
+Everything you record is saved on your phone first. When a connection returns, FieldLog uploads your submissions and photos automatically. A status indicator shows whether you are online and whether your work has been uploaded.
 
-FORMS BUILT FOR YOUR WORK
-Your team sets up each session, and FieldLog shows it as a clear, step-by-step form:
-• Text, numbers, dates and times
-• Dropdowns, checkboxes, radio buttons and switches
-• Sliders, star ratings, tags, rankings and matrices
-• Multi-page forms for longer surveys
-• Photo fields that use the camera or your gallery
+FORMS AND TALLY COUNTS
+Each session is set up by your team with either a form or a tally board:
+• Forms with text, numbers, dates and times, dropdowns, checkboxes, radio buttons, sliders, ratings, switches, tags, rankings and matrices
+• Photo fields using the camera or your gallery
+• Tally boards with picture buttons: tap once per animal or sign observed
 
-FAST TALLY COUNTS
-For counts, a session can use a tally board instead of a form:
-• Picture buttons grouped into folders, such as antelope or predators
-• Tap once per animal or sign observed
-• Running totals on every button
+LOCATION WHEN YOU NEED IT
+If a session records location, FieldLog adds your GPS position to each submission. Location is only requested for those sessions, and you can still submit if you turn it off.
 
-LOCATION WHEN A SESSION NEEDS IT
-Sessions that record location add your GPS position to each record. Location is only requested for those sessions, and you can still submit if you turn it off. FieldLog does not track your location in the background.
-
-JOIN YOUR TEAM
-Open an invite link from your team to join a private session, or browse public sessions and join them from the app.
+JOIN YOUR TEAM'S SESSIONS
+Browse public sessions and join them, or open an invite link from your team to join a private one.
 
 ACCOUNTS
-You need a FieldLog account to sign in. Accounts are set up for your team, and there is no sign-up inside the app. Request one at https://fieldlog.thefieldco.com/request-access
+FieldLog needs a FieldLog account. There is no sign-up inside the app: accounts are set up for your team. You can request one at https://fieldlog.thefieldco.com/request-access
 
 PRIVACY
-No ads and no analytics. FieldLog does not send diagnostics from your phone. Privacy policy: https://fieldlog.thefieldco.com/privacy
+FieldLog has no ads and no analytics. Privacy policy: https://fieldlog.thefieldco.com/privacy
 ```
 
 ## What's new (first release, max 500 characters)
