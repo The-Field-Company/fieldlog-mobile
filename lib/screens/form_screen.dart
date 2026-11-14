@@ -103,8 +103,9 @@ class _FormScreenState extends State<FormScreen> {
       if (fresh.trackLocation) _startLocation();
     } catch (e) {
       // Offline or server error — keep using the cached session
-      if (kDebugMode)
+      if (kDebugMode) {
         debugPrint('[FormScreen] Session refresh failed, using cache: $e');
+      }
     }
   }
 

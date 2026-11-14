@@ -80,8 +80,9 @@ class _InviteScreenState extends State<InviteScreen> {
         final subscriptions = await ApiService.getSubscriptions();
         await PowerSyncService.seedSessions(subscriptions);
       } catch (e) {
-        if (kDebugMode)
+        if (kDebugMode) {
           debugPrint('[Invite] local_sessions re-seed failed: $e');
+        }
       }
 
       if (!mounted) return;
