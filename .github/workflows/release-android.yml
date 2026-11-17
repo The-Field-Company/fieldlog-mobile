@@ -156,10 +156,11 @@ jobs:
           build_tools=$(find /opt/android-sdk/build-tools -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
           echo "BUILD_TOOLS=$build_tools" >> "$GITHUB_ENV"
           expected_code=$((BUILD_NUMBER * 10 + ABI_CODE))
-          badging=$("$build_tools/aapt2" dump badging out/unsigned.apk | head -n 1)
-          echo "$badging"
+          badging=$("$build_tools/aapt2" dump badging out/unsigned.apk)
+          package_line=${badging%%$'\n'*}
+          echo "$package_line"
           expected="package: name='com.thefieldco.fieldlog' versionCode='$expected_code' versionName='$VERSION_NAME'"
-          if [ "${badging%% platformBuildVersionName*}" != "$expected" ]; then
+          if [ "${package_line%% platformBuildVersionName*}" != "$expected" ]; then
             echo "::error::Expected $expected"
             exit 1
           fi

@@ -14,7 +14,7 @@ permissions:
 jobs:
   build:
     name: Build signed AAB
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     env:
       UPLOAD_KEYSTORE_BASE64: ${{ secrets.UPLOAD_KEYSTORE_BASE64 }}
