@@ -1,0 +1,1 @@
+FieldLog now has the same signature on GitHub, F-Droid and Google Play, so you can switch between them without reinstalling.
