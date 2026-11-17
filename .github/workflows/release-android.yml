@@ -4,62 +4,243 @@ on:
   push:
     tags:
       - 'v*'
+  pull_request:
+    paths:
+      - .github/workflows/release-android.yml
 
 permissions:
-  contents: write
+  contents: read
+
+env:
+  APP_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
-  build:
-    name: Build & publish APK
+  version:
+    name: Check version and secrets
     runs-on: ubuntu-latest
+    outputs:
+      version_name: ${{ steps.version.outputs.version_name }}
+      build_number: ${{ steps.version.outputs.build_number }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.38.7'
-          channel: stable
-          cache: true
+          ref: ${{ env.APP_COMMIT }}
 
-      - name: Install dependencies
-        run: flutter pub get
-
-      - name: Write .env.json
+      - name: Read pubspec version
+        id: version
         run: |
-          cat > .env.json <<EOF
-          {
-            "SERVER_URL": "${{ secrets.SERVER_URL }}",
-            "POWERSYNC_URL": "${{ secrets.POWERSYNC_URL }}",
-            "GLITCHTIP_DSN": "${{ secrets.GLITCHTIP_DSN }}"
-          }
-          EOF
+          pubspec_version=$(sed -n 's/^version:[[:space:]]*//p' pubspec.yaml)
+          version_name=${pubspec_version%%+*}
+          build_number=${pubspec_version#*+}
+          case "$build_number" in
+            ''|*[!0-9]*)
+              echo "::error::pubspec version $pubspec_version has no numeric build number"
+              exit 1
+              ;;
+          esac
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "v$version_name" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match pubspec version $version_name"
+            exit 1
+          fi
+          echo "version_name=$version_name" >> "$GITHUB_OUTPUT"
+          echo "build_number=$build_number" >> "$GITHUB_OUTPUT"
 
-      - name: Decode keystore
-        working-directory: android
-        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > fieldlog-release.jks
-
-      - name: Write key.properties
-        working-directory: android
+      - name: Check required secrets
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
         run: |
-          cat > key.properties <<EOF
-          storePassword=${{ secrets.KEYSTORE_PASSWORD }}
-          keyPassword=${{ secrets.KEYSTORE_PASSWORD }}
-          keyAlias=fieldlog
-          storeFile=../fieldlog-release.jks
+          missing=0
+          for name in KEYSTORE_BASE64 KEYSTORE_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing repository secret $name"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+  build:
+    name: Build ${{ matrix.abi }}
+    needs: version
+    runs-on: ubuntu-latest
+    container:
+      image: registry.gitlab.com/fdroid/fdroidserver@sha256:1ea8bef1820bff06c2974e31b4fc4c79c364cd24231b86e71fa4b926797e0dac
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      matrix:
+        include:
+          - abi: armeabi-v7a
+            platform: android-arm
+            abi_code: 1
+          - abi: arm64-v8a
+            platform: android-arm64
+            abi_code: 2
+          - abi: x86_64
+            platform: android-x64
+            abi_code: 3
+    env:
+      FLUTTER_VERSION: 3.38.7
+      NDK_RELEASE: r28c
+      NDK_DIR: /opt/android-sdk/ndk/28.2.13676358
+      FDROIDSERVER_COMMIT: a35fdfddd9c66823987a410566a6101186e39c84
+      RELEASE_CERT_SHA256: 67a816f7adfb618c97fec1ae8061fecad9f19c0a19536111190ba7ac87342959
+      VERSION_NAME: ${{ needs.version.outputs.version_name }}
+      BUILD_NUMBER: ${{ needs.version.outputs.build_number }}
+      ABI: ${{ matrix.abi }}
+      ABI_CODE: ${{ matrix.abi_code }}
+      TARGET_PLATFORM: ${{ matrix.platform }}
+
+    steps:
+      - name: Prepare build server like fdroiddata CI
+        run: |
+          set -euxo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get -y dist-upgrade
+          apt-get install -y sudo openjdk-21-jdk-headless
+          update-alternatives --set java /usr/lib/jvm/java-21-openjdk-amd64/bin/java
+          export ANDROID_HOME=/opt/android-sdk
+          sdkmanager "platform-tools" "build-tools;31.0.0" "ndk;$NDK_RELEASE"
+          test -d "$NDK_DIR"
+          chown -R vagrant /opt/android-sdk
+          git clone https://gitlab.com/fdroid/fdroidserver.git /tmp/fdroidserver
+          git -C /tmp/fdroidserver checkout -f "$FDROIDSERVER_COMMIT"
+          mkdir -p /home/vagrant/build /home/vagrant/.gradle /home/vagrant/.android
+          chown -R vagrant /home/vagrant
+
+      - name: Build unsigned APK like fdroid build
+        run: |
+          set -euxo pipefail
+          cat > /tmp/build.sh <<'EOF'
+          set -euxo pipefail
+          export HOME=/home/vagrant
+          export GRADLE_USER_HOME=/home/vagrant/.gradle
+          export ANDROID_HOME=/opt/android-sdk ANDROID_SDK=/opt/android-sdk ANDROID_SDK_ROOT=/opt/android-sdk
+          export ANDROID_NDK="$NDK_DIR" NDK="$NDK_DIR" ANDROID_NDK_HOME="$NDK_DIR"
+          export PATH="$NDK_DIR:$PATH"
+          if [ -z "${LC_ALL:-}" ] && { [ -z "${LANG:-}" ] || [ "$LANG" = C ]; }; then export LANG=en_US.UTF-8; fi
+          cd /home/vagrant/build
+          git clone https://github.com/flutter/flutter.git srclib/flutter
+          git -C srclib/flutter checkout -f "$FLUTTER_VERSION"
+          git clone "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" com.thefieldco.fieldlog
+          cd com.thefieldco.fieldlog
+          git cat-file -e "$APP_COMMIT^{commit}" || git fetch origin "$APP_COMMIT"
+          git checkout -f "$APP_COMMIT"
+          git clean -dffx
+          git submodule deinit --all --force
+          export SOURCE_DATE_EPOCH="$(git log -n 1 --pretty=%ct)"
+          printf 'sdk.dir=%s\nsdk-location=%s\nndk.dir=%s\nndk-location=%s\n' \
+            "$ANDROID_HOME" "$ANDROID_HOME" "$NDK_DIR" "$NDK_DIR" > local.properties
+          rm -rf ios
+          PYTHONPATH=/tmp/fdroidserver python3 -c "from fdroidserver import common; common.remove_signing_keys('.')"
+          export PUB_CACHE="$(pwd)/.pub-cache"
+          /home/vagrant/build/srclib/flutter/bin/flutter config --no-analytics
+          /home/vagrant/build/srclib/flutter/bin/flutter pub get --enforce-lockfile
+          /home/vagrant/build/srclib/flutter/bin/flutter build apk --release --split-per-abi \
+            --target-platform="$TARGET_PLATFORM" --android-project-arg=fdroid=true \
+            --dart-define=SERVER_URL=https://fieldlog.thefieldco.com \
+            --dart-define=POWERSYNC_URL=https://fieldlog.thefieldco.com/powersync
           EOF
+          chown vagrant /tmp/build.sh
+          sudo --preserve-env --user vagrant bash /tmp/build.sh
+          mkdir -p out
+          cp "/home/vagrant/build/com.thefieldco.fieldlog/build/app/outputs/flutter-apk/app-$ABI-release.apk" out/unsigned.apk
 
-      - name: Build release APK
-        run: flutter build apk --release --dart-define-from-file=.env.json
+      - name: Check package and version code
+        run: |
+          set -euo pipefail
+          build_tools=$(find /opt/android-sdk/build-tools -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
+          echo "BUILD_TOOLS=$build_tools" >> "$GITHUB_ENV"
+          expected_code=$((BUILD_NUMBER * 10 + ABI_CODE))
+          badging=$("$build_tools/aapt2" dump badging out/unsigned.apk | head -n 1)
+          echo "$badging"
+          expected="package: name='com.thefieldco.fieldlog' versionCode='$expected_code' versionName='$VERSION_NAME'"
+          if [ "${badging%% platformBuildVersionName*}" != "$expected" ]; then
+            echo "::error::Expected $expected"
+            exit 1
+          fi
 
-      - name: Rename APK
-        run: mv build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/FieldLog-${{ github.ref_name }}.apk
+      - name: Sign with release key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          keystore="$RUNNER_TEMP/fieldlog-release.jks"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$keystore"
+          "$BUILD_TOOLS/apksigner" sign --ks "$keystore" --ks-key-alias fieldlog \
+            --ks-pass env:KEYSTORE_PASSWORD --key-pass env:KEYSTORE_PASSWORD \
+            --alignment-preserved --out out/signed.apk out/unsigned.apk
+          rm -f "$keystore"
+
+      - name: Verify signature like F-Droid
+        run: |
+          set -euo pipefail
+          certs=$("$BUILD_TOOLS/apksigner" verify --verbose --print-certs out/signed.apk)
+          echo "$certs" | grep -E '^Verified using|^Number of signers|SHA-256 digest'
+          if [ "$(echo "$certs" | sed -n 's/^Number of signers: //p')" != 1 ]; then
+            echo "::error::Expected exactly one signer"
+            exit 1
+          fi
+          actual=$(echo "$certs" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+          if [ "$actual" != "$RELEASE_CERT_SHA256" ]; then
+            echo "::error::Signed with $actual, expected release key $RELEASE_CERT_SHA256"
+            exit 1
+          fi
+          PYTHONPATH=/tmp/fdroidserver python3 - "$BUILD_TOOLS/apksigner" <<'EOF'
+          import sys, tempfile
+          from fdroidserver import common
+          common.config = {'apksigner': sys.argv[1]}
+          error = common.verify_apks('out/signed.apk', 'out/unsigned.apk', tempfile.mkdtemp())
+          if error:
+              print(error)
+              sys.exit(1)
+          print('F-Droid can copy this signature onto its own build')
+          EOF
+          mv out/signed.apk "out/FieldLog-v$VERSION_NAME-$ABI.apk"
+
+      - name: Remove signing files
+        if: always()
+        run: rm -f "$RUNNER_TEMP/fieldlog-release.jks"
+
+      - name: Upload signed APK
+        if: github.ref_type == 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: FieldLog-v${{ needs.version.outputs.version_name }}-${{ matrix.abi }}
+          path: out/FieldLog-v${{ needs.version.outputs.version_name }}-${{ matrix.abi }}.apk
+          retention-days: 7
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub release
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download signed APKs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: FieldLog-*
+          path: apks
+          merge-multiple: true
+
+      - name: Check all three APKs are present
+        run: |
+          ls -l apks
+          test "$(find apks -name '*.apk' | wc -l)" -eq 3
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: ${{ github.ref_name }}
-          files: build/app/outputs/flutter-apk/FieldLog-${{ github.ref_name }}.apk
+          body: Most phones need the arm64-v8a APK.
+          files: apks/*.apk
           generate_release_notes: true

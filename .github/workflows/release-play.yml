@@ -4,6 +4,9 @@ on:
   push:
     tags:
       - 'v*'
+  pull_request:
+    paths:
+      - .github/workflows/release-play.yml
 
 permissions:
   contents: read
@@ -20,7 +23,6 @@ jobs:
       UPLOAD_KEY_PASSWORD: ${{ secrets.UPLOAD_KEY_PASSWORD }}
       SERVER_URL: ${{ secrets.SERVER_URL }}
       POWERSYNC_URL: ${{ secrets.POWERSYNC_URL }}
-      GLITCHTIP_DSN: ${{ secrets.GLITCHTIP_DSN }}
 
     steps:
       - name: Checkout
@@ -31,7 +33,7 @@ jobs:
           pubspec_version=$(sed -n 's/^version:[[:space:]]*//p' pubspec.yaml)
           version_name=${pubspec_version%%+*}
           build_number=${pubspec_version#*+}
-          if [ "v$version_name" != "$GITHUB_REF_NAME" ]; then
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "v$version_name" != "$GITHUB_REF_NAME" ]; then
             echo "::error::Tag $GITHUB_REF_NAME does not match pubspec version $version_name"
             exit 1
           fi
@@ -41,7 +43,8 @@ jobs:
               exit 1
               ;;
           esac
-          echo "BUILD_NUMBER=$build_number" >> "$GITHUB_ENV"
+          echo "VERSION_NAME=$version_name" >> "$GITHUB_ENV"
+          echo "PLAY_VERSION_CODE=$((build_number * 10 + 4))" >> "$GITHUB_ENV"
 
       - name: Check required secrets
         run: |
@@ -69,8 +72,7 @@ jobs:
           jq -n \
             --arg server "$SERVER_URL" \
             --arg powersync "$POWERSYNC_URL" \
-            --arg dsn "$GLITCHTIP_DSN" \
-            '{SERVER_URL: $server, POWERSYNC_URL: $powersync, GLITCHTIP_DSN: $dsn}' > .env.json
+            '{SERVER_URL: $server, POWERSYNC_URL: $powersync}' > .env.json
 
       - name: Write upload key
         run: |
@@ -85,7 +87,7 @@ jobs:
           echo "UPLOAD_KEYSTORE=$keystore" >> "$GITHUB_ENV"
 
       - name: Build release AAB
-        run: flutter build appbundle --release --dart-define-from-file=.env.json
+        run: flutter build appbundle --release --build-number="$PLAY_VERSION_CODE" --dart-define-from-file=.env.json
 
       - name: Verify AAB signature and version
         run: |
@@ -108,18 +110,19 @@ jobs:
           (cd "$manifest_dir" && zip -q base.apk AndroidManifest.xml resources.pb)
           version_code=$("$aapt2" dump xmltree --file AndroidManifest.xml "$manifest_dir/base.apk" \
             | sed -n 's/.*android:versionCode([^)]*)=\([0-9]*\).*/\1/p' | head -n 1)
-          if [ "$version_code" != "$BUILD_NUMBER" ]; then
-            echo "::error::AAB versionCode $version_code does not match pubspec build number $BUILD_NUMBER"
+          if [ "$version_code" != "$PLAY_VERSION_CODE" ]; then
+            echo "::error::AAB versionCode $version_code is not $PLAY_VERSION_CODE (pubspec build number x 10 + 4)"
             exit 1
           fi
           echo "Signed with upload key $actual, versionCode $version_code"
-          mv "$aab" "build/app/outputs/bundle/release/FieldLog-$GITHUB_REF_NAME.aab"
+          mv "$aab" "build/app/outputs/bundle/release/FieldLog-v$VERSION_NAME.aab"
 
       - name: Remove signing files
         if: always()
         run: rm -f android/key.properties "$RUNNER_TEMP/upload-keystore.jks" .env.json
 
       - name: Upload AAB artifact
+        if: github.ref_type == 'tag'
         uses: actions/upload-artifact@v4
         with:
           name: FieldLog-${{ github.ref_name }}-play
