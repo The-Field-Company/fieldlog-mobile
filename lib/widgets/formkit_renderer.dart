@@ -152,6 +152,7 @@ class _FormkitRendererState extends State<FormkitRenderer> {
         return FileFieldWidget(
           label: comp.label,
           isRequired: comp.isRequired,
+          accepts: comp.accepts,
           onChanged: (v) {
             if (v == null) {
               _data.remove(comp.key);

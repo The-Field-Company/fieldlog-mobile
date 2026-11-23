@@ -81,4 +81,33 @@ void main() {
       expect(component.isRequired, isFalse);
     });
   });
+
+  group('FormComponent.accepts', () {
+    test('preserves accepts value on file fields', () {
+      final audio = FormComponent.fromJson({
+        'type': 'file',
+        'key': 'call',
+        'label': 'Bird Call',
+        'accepts': 'audio',
+      });
+      expect(audio.accepts, 'audio');
+
+      final both = FormComponent.fromJson({
+        'type': 'file',
+        'key': 'media',
+        'label': 'Media',
+        'accepts': 'image,audio',
+      });
+      expect(both.accepts, 'image,audio');
+    });
+
+    test('is null when accepts key is omitted', () {
+      final photo = FormComponent.fromJson({
+        'type': 'file',
+        'key': 'photo',
+        'label': 'Photo',
+      });
+      expect(photo.accepts, isNull);
+    });
+  });
 }

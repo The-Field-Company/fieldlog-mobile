@@ -56,6 +56,9 @@ class SurveyElement {
   final bool multiSelect;
   final bool showLabel;
 
+  // File
+  final String? accepts;
+
   SurveyElement({
     required this.type,
     required this.name,
@@ -89,6 +92,7 @@ class SurveyElement {
     this.step,
     this.multiSelect = false,
     this.showLabel = true,
+    this.accepts,
   });
 
   factory SurveyElement.fromJson(Map<String, dynamic> json) {
@@ -137,6 +141,7 @@ class SurveyElement {
       step: json['step'],
       multiSelect: json['multiSelect'] == true,
       showLabel: json['showLabel'] != false,
+      accepts: json['accepts']?.toString(),
     );
   }
 

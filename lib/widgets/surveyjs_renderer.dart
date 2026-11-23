@@ -269,7 +269,17 @@ class _SurveyjsRendererState extends State<SurveyjsRenderer> {
         child = FileFieldWidget(
           label: element.title,
           isRequired: isRequired,
-          onChanged: (v) => _updateData(element.name, v),
+          accepts: element.accepts,
+          initialValue: _data[element.name] as Map<String, dynamic>?,
+          onChanged: (v) {
+            setState(() {
+              if (v == null) {
+                _data.remove(element.name);
+              } else {
+                _data[element.name] = v;
+              }
+            });
+          },
         );
       default:
         child = Padding(
