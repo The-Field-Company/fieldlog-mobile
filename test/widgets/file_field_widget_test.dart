@@ -342,5 +342,103 @@ void main() {
       );
       expect(find.text('Settings'), findsOneWidget);
     });
+
+    testWidgets(
+      'playing a second audio field interrupts the first and blocks concurrent recording',
+      (tester) async {
+        final fileA = File('${tempDir.path}/a.m4a')
+          ..writeAsBytesSync(List<int>.filled(2048, 1));
+        final fileB = File('${tempDir.path}/b.m4a')
+          ..writeAsBytesSync(List<int>.filled(2048, 2));
+
+        await tester.pumpWidget(
+          wrap(
+            Column(
+              children: [
+                FileFieldWidget(
+                  label: 'Audio A',
+                  accepts: 'audio',
+                  initialValue: {
+                    'file_path': fileA.path,
+                    'file_name': 'a.m4a',
+                    'original_name': 'a.m4a',
+                    'file_size': 2048,
+                  },
+                  onChanged: (_) {},
+                ),
+                FileFieldWidget(
+                  label: 'Audio B',
+                  accepts: 'audio',
+                  initialValue: {
+                    'file_path': fileB.path,
+                    'file_name': 'b.m4a',
+                    'original_name': 'b.m4a',
+                    'file_size': 2048,
+                  },
+                  onChanged: (_) {},
+                ),
+              ],
+            ),
+          ),
+        );
+
+        final playButtons = find.byIcon(Icons.play_arrow_rounded);
+        expect(playButtons, findsNWidgets(2));
+
+        await tester.tap(playButtons.first);
+        await tester.pump();
+        expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
+        expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
+
+        // Playing Audio B resets Audio A back to play icon.
+        await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+        await tester.pump();
+        expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
+        expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
+      },
+    );
+
+    testWidgets('blocks starting a second recording while one is active', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        wrap(
+          Column(
+            children: [
+              FileFieldWidget(
+                label: 'Note 1',
+                accepts: 'audio',
+                onChanged: (_) {},
+              ),
+              FileFieldWidget(
+                label: 'Note 2',
+                accepts: 'audio',
+                onChanged: (_) {},
+              ),
+            ],
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Add audio').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Record Audio'));
+      await tester.pump();
+
+      expect(find.text('Save'), findsOneWidget);
+
+      await tester.tap(find.text('Add audio'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.tap(find.text('Record Audio'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(
+        find.text('Finish or discard the other active recording first.'),
+        findsOneWidget,
+      );
+      expect(find.text('Save'), findsOneWidget);
+    });
   });
 }

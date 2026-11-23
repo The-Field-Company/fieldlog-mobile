@@ -7,6 +7,15 @@ import 'package:record/record.dart';
 import '../utils/attachment_accepts.dart';
 import 'location_service.dart';
 
+class AudioPickException implements Exception {
+  final String message;
+
+  const AudioPickException(this.message);
+
+  @override
+  String toString() => message;
+}
+
 class PickedAudioFile {
   final String path;
   final String name;
@@ -64,19 +73,39 @@ abstract class AudioBackend {
 class _PluginAudioBackend implements AudioBackend {
   AudioRecorder? _recorder;
   AudioPlayer? _player;
-  StreamSubscription<void>? _completeSub;
   VoidCallback? _onPlaybackComplete;
   String? _recordingPath;
   DateTime? _recordingSegmentStartedAt;
   Duration _recordingAccumulated = Duration.zero;
+  PlayerState _playerState = PlayerState.stopped;
+  int _positionMs = 0;
+  int _durationMs = 0;
+  bool _startingPlayback = false;
 
   AudioRecorder get _audioRecorder => _recorder ??= AudioRecorder();
 
   AudioPlayer get _audioPlayer {
     if (_player != null) return _player!;
     final player = AudioPlayer();
-    _completeSub = player.onPlayerComplete.listen((_) {
+    player.onPlayerComplete.listen((_) {
+      _startingPlayback = false;
+      _playerState = PlayerState.completed;
+      _positionMs = 0;
       _onPlaybackComplete?.call();
+    });
+    player.onPlayerStateChanged.listen((state) {
+      _playerState = state;
+      if (state == PlayerState.playing ||
+          state == PlayerState.stopped ||
+          state == PlayerState.completed) {
+        _startingPlayback = false;
+      }
+    });
+    player.onPositionChanged.listen((pos) {
+      _positionMs = pos.inMilliseconds;
+    });
+    player.onDurationChanged.listen((dur) {
+      _durationMs = dur.inMilliseconds;
     });
     _player = player;
     return player;
@@ -120,11 +149,28 @@ class _PluginAudioBackend implements AudioBackend {
     final ext = extensionOf(picked.name).isNotEmpty
         ? extensionOf(picked.name)
         : extensionOf(sourcePath);
-    final finalPath = ext.isNotEmpty
-        ? '$destinationBasePath.$ext'
-        : destinationBasePath;
 
-    final saved = await File(sourcePath).copy(finalPath);
+    // Validate extension and size BEFORE copying potentially large files.
+    if (kindForExtension(ext) != AttachmentKind.audio) {
+      throw AudioPickException(
+        'Unsupported audio format${ext.isNotEmpty ? ' (.$ext)' : ''}. '
+        'Supported: M4A, MP3, WAV, OGG, OPUS, WEBM, AAC, FLAC.',
+      );
+    }
+
+    final sourceFile = File(sourcePath);
+    final sourceSize = picked.size > 0 ? picked.size : await sourceFile.length();
+    if (sourceSize == 0) {
+      throw const AudioPickException('Selected audio file is empty.');
+    }
+    if (sourceSize > maxAudioBytes) {
+      throw AudioPickException(
+        'Audio file too large (max ${maxMbForKind(AttachmentKind.audio)} MB).',
+      );
+    }
+
+    final finalPath = '$destinationBasePath.$ext';
+    final saved = await sourceFile.copy(finalPath);
     final size = await saved.length();
 
     return PickedAudioFile(
@@ -239,23 +285,42 @@ class _PluginAudioBackend implements AudioBackend {
   Future<int> startPlayback({required String path}) async {
     final player = _audioPlayer;
     await player.stop();
-    await player.play(DeviceFileSource(path));
+    _positionMs = 0;
+    _durationMs = 0;
+    _startingPlayback = true;
+    try {
+      await player.play(DeviceFileSource(path));
+    } catch (_) {
+      _startingPlayback = false;
+      rethrow;
+    }
     final duration = await player.getDuration();
-    return duration?.inMilliseconds ?? 0;
+    final ms = duration?.inMilliseconds ?? _durationMs;
+    if (ms > 0) _durationMs = ms;
+    return ms;
   }
 
   @override
   Future<void> pausePlayback() async {
+    _startingPlayback = false;
     await _player?.pause();
   }
 
   @override
   Future<void> resumePlayback() async {
-    await _player?.resume();
+    _startingPlayback = true;
+    try {
+      await _player?.resume();
+    } catch (_) {
+      _startingPlayback = false;
+      rethrow;
+    }
   }
 
   @override
   Future<void> stopPlayback() async {
+    _startingPlayback = false;
+    _positionMs = 0;
     try {
       await _player?.stop();
     } catch (e) {
@@ -278,10 +343,14 @@ class _PluginAudioBackend implements AudioBackend {
     try {
       final pos = await player.getCurrentPosition();
       final dur = await player.getDuration();
+      final posMs = pos?.inMilliseconds ?? _positionMs;
+      final durMs = dur?.inMilliseconds ?? _durationMs;
       return PlaybackStatus(
-        isPlaying: player.state == PlayerState.playing,
-        positionMs: pos?.inMilliseconds ?? 0,
-        durationMs: dur?.inMilliseconds ?? 0,
+        isPlaying: _startingPlayback ||
+            _playerState == PlayerState.playing ||
+            player.state == PlayerState.playing,
+        positionMs: posMs,
+        durationMs: durMs,
       );
     } catch (_) {
       return const PlaybackStatus(
@@ -291,24 +360,26 @@ class _PluginAudioBackend implements AudioBackend {
       );
     }
   }
-
-  // Keep reference so the subscription stays active while player lives.
-  // ignore: unused_element
-  Future<void> dispose() async {
-    await _completeSub?.cancel();
-    await _player?.dispose();
-    await _recorder?.dispose();
-  }
 }
 
 /// Wrapper around `file_picker`, `record`, and `audioplayers` for audio field
 /// selection, in-app AAC `.m4a` recording, and playback preview.
+///
+/// Tracks active recording and playback owners so multiple `FileFieldWidget`
+/// instances on the same form never clobber each other's state or hardware.
 class AudioService {
+  static const String _defaultOwner = 'default';
   static AudioBackend _backend = _PluginAudioBackend();
+  static String? _activeRecordingOwner;
+  static String? _activePlaybackOwner;
+  static VoidCallback? _onPlaybackInterrupted;
 
   @visibleForTesting
   static set backend(AudioBackend? override) {
     _backend = override ?? _PluginAudioBackend();
+    _activeRecordingOwner = null;
+    _activePlaybackOwner = null;
+    _onPlaybackInterrupted = null;
   }
 
   static void setOnPlaybackComplete(VoidCallback? callback) =>
@@ -322,29 +393,131 @@ class AudioService {
     required String destinationBasePath,
   }) => _backend.pickAudioFile(destinationBasePath: destinationBasePath);
 
-  static Future<void> startRecording({required String path}) =>
-      _backend.startRecording(path: path);
+  static Future<void> startRecording({
+    required String path,
+    String ownerId = _defaultOwner,
+  }) async {
+    if (_activeRecordingOwner != null && _activeRecordingOwner != ownerId) {
+      throw StateError('Another audio field is currently recording.');
+    }
+    // Notify any active playback owner before recording stops playback.
+    if (_activePlaybackOwner != null) {
+      final interrupted = _onPlaybackInterrupted;
+      _activePlaybackOwner = null;
+      _onPlaybackInterrupted = null;
+      _backend.setOnPlaybackComplete(null);
+      interrupted?.call();
+    }
+    _activeRecordingOwner = ownerId;
+    try {
+      await _backend.startRecording(path: path);
+    } catch (_) {
+      if (_activeRecordingOwner == ownerId) {
+        _activeRecordingOwner = null;
+      }
+      rethrow;
+    }
+  }
 
-  static Future<void> pauseRecording() => _backend.pauseRecording();
+  static Future<void> pauseRecording({String ownerId = _defaultOwner}) async {
+    if (_activeRecordingOwner != ownerId) return;
+    await _backend.pauseRecording();
+  }
 
-  static Future<void> resumeRecording() => _backend.resumeRecording();
+  static Future<void> resumeRecording({String ownerId = _defaultOwner}) async {
+    if (_activeRecordingOwner != ownerId) return;
+    await _backend.resumeRecording();
+  }
 
-  static Future<RecordedAudio?> stopRecording() => _backend.stopRecording();
+  static Future<RecordedAudio?> stopRecording({
+    String ownerId = _defaultOwner,
+  }) async {
+    if (_activeRecordingOwner != ownerId) return null;
+    try {
+      return await _backend.stopRecording();
+    } finally {
+      if (_activeRecordingOwner == ownerId) {
+        _activeRecordingOwner = null;
+      }
+    }
+  }
 
-  static Future<void> cancelRecording() => _backend.cancelRecording();
+  static Future<void> cancelRecording({String ownerId = _defaultOwner}) async {
+    if (_activeRecordingOwner != ownerId) return;
+    _activeRecordingOwner = null;
+    await _backend.cancelRecording();
+  }
 
-  static Future<double> getRecordingAmplitude() =>
-      _backend.getRecordingAmplitude();
+  static Future<double> getRecordingAmplitude({
+    String ownerId = _defaultOwner,
+  }) async {
+    if (_activeRecordingOwner != ownerId) return 0.0;
+    return _backend.getRecordingAmplitude();
+  }
 
-  static Future<int> startPlayback({required String path}) =>
-      _backend.startPlayback(path: path);
+  static Future<int> startPlayback({
+    required String path,
+    String ownerId = _defaultOwner,
+    VoidCallback? onComplete,
+    VoidCallback? onInterrupted,
+  }) async {
+    if (_activePlaybackOwner != null && _activePlaybackOwner != ownerId) {
+      final previousInterrupted = _onPlaybackInterrupted;
+      _activePlaybackOwner = null;
+      _onPlaybackInterrupted = null;
+      _backend.setOnPlaybackComplete(null);
+      previousInterrupted?.call();
+    }
 
-  static Future<void> pausePlayback() => _backend.pausePlayback();
+    _activePlaybackOwner = ownerId;
+    _onPlaybackInterrupted = onInterrupted;
+    _backend.setOnPlaybackComplete(() {
+      if (_activePlaybackOwner != ownerId) return;
+      _activePlaybackOwner = null;
+      _onPlaybackInterrupted = null;
+      onComplete?.call();
+    });
 
-  static Future<void> resumePlayback() => _backend.resumePlayback();
+    try {
+      return await _backend.startPlayback(path: path);
+    } catch (_) {
+      if (_activePlaybackOwner == ownerId) {
+        _activePlaybackOwner = null;
+        _onPlaybackInterrupted = null;
+        _backend.setOnPlaybackComplete(null);
+      }
+      rethrow;
+    }
+  }
 
-  static Future<void> stopPlayback() => _backend.stopPlayback();
+  static Future<void> pausePlayback({String ownerId = _defaultOwner}) async {
+    if (_activePlaybackOwner != ownerId) return;
+    await _backend.pausePlayback();
+  }
 
-  static Future<PlaybackStatus> getPlaybackStatus() =>
-      _backend.getPlaybackStatus();
+  static Future<void> resumePlayback({String ownerId = _defaultOwner}) async {
+    if (_activePlaybackOwner != ownerId) return;
+    await _backend.resumePlayback();
+  }
+
+  static Future<void> stopPlayback({String ownerId = _defaultOwner}) async {
+    if (_activePlaybackOwner != ownerId) return;
+    _activePlaybackOwner = null;
+    _onPlaybackInterrupted = null;
+    _backend.setOnPlaybackComplete(null);
+    await _backend.stopPlayback();
+  }
+
+  static Future<PlaybackStatus> getPlaybackStatus({
+    String ownerId = _defaultOwner,
+  }) async {
+    if (_activePlaybackOwner != ownerId) {
+      return const PlaybackStatus(
+        isPlaying: false,
+        positionMs: 0,
+        durationMs: 0,
+      );
+    }
+    return _backend.getPlaybackStatus();
+  }
 }

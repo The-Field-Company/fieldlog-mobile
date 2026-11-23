@@ -153,6 +153,7 @@ class _FormkitRendererState extends State<FormkitRenderer> {
           label: comp.label,
           isRequired: comp.isRequired,
           accepts: comp.accepts,
+          initialValue: _data[comp.key] as Map<String, dynamic>?,
           onChanged: (v) {
             if (v == null) {
               _data.remove(comp.key);

@@ -191,7 +191,7 @@ class FieldLogConnector extends PowerSyncBackendConnector {
 
       final actualSize = await file.length();
       final presign = await ApiService.presignUpload(
-        fileName: fileName,
+        fileName: originalName.isNotEmpty ? originalName : fileName,
         contentType: contentType,
         sessionId: sessionId?.toString(),
       );
@@ -325,16 +325,41 @@ class FieldLogConnector extends PowerSyncBackendConnector {
           final responseFuture = client
               .send(request)
               .timeout(_binaryUploadTimeout);
-          final pumpFuture = () async {
-            try {
-              await request.sink.addStream(file.openRead());
-            } finally {
-              await request.sink.close();
-            }
-          }().catchError((Object _) {});
 
-          final streamedResponse = await responseFuture;
-          await pumpFuture;
+          final pumpDone = Completer<void>();
+          Object? pumpError;
+          StackTrace? pumpStack;
+          final fileSub = file.openRead().listen(
+            request.sink.add,
+            onError: (Object error, StackTrace stackTrace) {
+              pumpError = error;
+              pumpStack = stackTrace;
+              request.sink.addError(error, stackTrace);
+              request.sink.close().ignore();
+              if (!pumpDone.isCompleted) pumpDone.complete();
+            },
+            onDone: () {
+              request.sink.close().whenComplete(() {
+                if (!pumpDone.isCompleted) pumpDone.complete();
+              }).ignore();
+            },
+            cancelOnError: true,
+          );
+
+          final http.StreamedResponse streamedResponse;
+          try {
+            streamedResponse = await responseFuture;
+          } catch (_) {
+            await fileSub.cancel();
+            request.sink.close().ignore();
+            rethrow;
+          }
+
+          await pumpDone.future;
+          if (pumpError != null) {
+            await streamedResponse.stream.drain<void>();
+            Error.throwWithStackTrace(pumpError!, pumpStack!);
+          }
           await streamedResponse.stream.drain<void>();
           final statusCode = streamedResponse.statusCode;
 
