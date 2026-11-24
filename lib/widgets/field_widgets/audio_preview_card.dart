@@ -30,6 +30,12 @@ class AudioPreviewCard extends StatefulWidget {
 }
 
 class _AudioPreviewCardState extends State<AudioPreviewCard> {
+  static const List<double> _waveformProfile = [
+    0.28, 0.48, 0.72, 0.54, 0.92, 0.64, 0.36, 0.82,
+    1.00, 0.68, 0.44, 0.76, 0.88, 0.52, 0.34, 0.70,
+    0.96, 0.60, 0.42, 0.78, 0.56, 0.38, 0.62, 0.30,
+  ];
+
   bool _isPlaying = false;
   bool _isPaused = false;
   bool _isBusy = false;
@@ -193,11 +199,15 @@ class _AudioPreviewCardState extends State<AudioPreviewCard> {
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
       decoration: BoxDecoration(
-        color: AppColors.primaryBg,
+        color: AppColors.accent.withValues(alpha: 0.03),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: AppColors.borderColor),
+        border: Border.all(
+          color: _isPlaying
+              ? AppColors.accent.withValues(alpha: 0.35)
+              : AppColors.borderColor,
+        ),
       ),
       child: Row(
         children: [
@@ -205,22 +215,22 @@ class _AudioPreviewCardState extends State<AudioPreviewCard> {
             onTap: _togglePlayback,
             customBorder: const CircleBorder(),
             child: Container(
-              width: 36,
-              height: 36,
+              width: 40,
+              height: 40,
               decoration: BoxDecoration(
                 color: _isPlaying
                     ? AppColors.accent
-                    : AppColors.accent.withValues(alpha: 0.1),
+                    : AppColors.accent.withValues(alpha: 0.12),
                 shape: BoxShape.circle,
               ),
               child: Icon(
                 _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
                 color: _isPlaying ? Colors.white : AppColors.accent,
-                size: 20,
+                size: 22,
               ),
             ),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -230,30 +240,44 @@ class _AudioPreviewCardState extends State<AudioPreviewCard> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: AppTypography.textStyle(
-                    fontSize: 13,
+                    fontSize: 14,
                     fontWeight: FontWeight.w600,
                     color: AppColors.textPrimary,
                   ),
                 ),
-                const SizedBox(height: 5),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(2),
-                  child: LinearProgressIndicator(
-                    value: progress,
-                    minHeight: 2.5,
-                    backgroundColor: AppColors.dividerColor,
-                    valueColor: const AlwaysStoppedAnimation<Color>(
-                      AppColors.accent,
-                    ),
+                const SizedBox(height: 6),
+                SizedBox(
+                  height: 16,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: List.generate(_waveformProfile.length, (index) {
+                      final barThreshold =
+                          (index + 1) / _waveformProfile.length;
+                      final isPlayed = progress > 0 && progress >= barThreshold;
+                      final barHeight = 3.0 + (_waveformProfile[index] * 13.0);
+                      return Container(
+                        width: 2.5,
+                        height: barHeight,
+                        decoration: BoxDecoration(
+                          color: isPlayed
+                              ? AppColors.accent
+                              : AppColors.accent.withValues(
+                                  alpha: _isPlaying ? 0.28 : 0.2,
+                                ),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      );
+                    }),
                   ),
                 ),
                 if (subtitleParts.isNotEmpty) ...[
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 5),
                   Text(
                     subtitleParts.join(' · '),
                     style: AppTypography.textStyle(
-                      fontSize: 11,
-                      color: AppColors.textTertiary,
+                      fontSize: 12,
+                      color: AppColors.textSecondary,
                       fontFeatures: const [FontFeature.tabularFigures()],
                     ),
                   ),
@@ -268,7 +292,7 @@ class _AudioPreviewCardState extends State<AudioPreviewCard> {
             icon: const Icon(
               Icons.close_rounded,
               size: 18,
-              color: AppColors.textTertiary,
+              color: AppColors.textSecondary,
             ),
             tooltip: 'Remove audio',
           ),
