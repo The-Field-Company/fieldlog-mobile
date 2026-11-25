@@ -73,6 +73,22 @@ class PowerSyncService {
     }
   }
 
+  static Future<int> countUnsyncedRecords() async {
+    final db = _db;
+    if (db == null) return 0;
+    try {
+      final pending = await db.get(
+        "SELECT COUNT(*) AS n FROM ps_crud"
+        " WHERE json_extract(data, '\$.type') = 'fieldlog_submission'",
+      );
+      final rejected =
+          await db.get('SELECT COUNT(*) AS n FROM rejected_submissions');
+      return (pending['n'] as int) + (rejected['n'] as int);
+    } catch (_) {
+      return 0;
+    }
+  }
+
   static Future<void> disconnectPowerSync() async {
     await _connectivitySubscription?.cancel();
     _connectivitySubscription = null;

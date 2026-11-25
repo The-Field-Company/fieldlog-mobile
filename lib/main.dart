@@ -10,8 +10,10 @@ import 'screens/form_screen.dart';
 import 'screens/success_screen.dart';
 import 'screens/browse_sessions_screen.dart';
 import 'screens/invite_screen.dart';
+import 'screens/update_required_screen.dart';
 import 'services/auth_service.dart';
 import 'services/api_service.dart';
+import 'services/app_version_service.dart';
 import 'services/powersync_service.dart';
 import 'services/connectivity_service.dart';
 import 'services/sync_error_service.dart';
@@ -42,6 +44,7 @@ void main() async {
     },
     appRunner: () async {
       await ConnectivityService.init();
+      await AppVersionService.init();
 
       String initialRoute = '/login';
       final sessionValid = await AuthService.initSession();
@@ -73,6 +76,7 @@ void main() async {
         initialLink: initialLink,
         appLinks: appLinks,
       ));
+      unawaited(AppVersionService.check());
     },
   );
 }
@@ -93,13 +97,20 @@ class FieldLogApp extends StatefulWidget {
   State<FieldLogApp> createState() => _FieldLogAppState();
 }
 
-class _FieldLogAppState extends State<FieldLogApp> {
+class _FieldLogAppState extends State<FieldLogApp> with WidgetsBindingObserver {
+  static const _updateRouteName = '/update-required';
   final _navigatorKey = GlobalKey<NavigatorState>();
   StreamSubscription<Uri>? _linkSubscription;
+  bool _updateScreenShown = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    AppVersionService.updateRequired.addListener(_onUpdateRequiredChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _onUpdateRequiredChanged();
+    });
     if (widget.initialLink != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _handleLink(widget.initialLink!);
@@ -110,11 +121,37 @@ class _FieldLogAppState extends State<FieldLogApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    AppVersionService.updateRequired.removeListener(_onUpdateRequiredChanged);
     _linkSubscription?.cancel();
     super.dispose();
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      AppVersionService.check();
+    }
+  }
+
+  void _onUpdateRequiredChanged() {
+    final nav = _navigatorKey.currentState;
+    if (nav == null) return;
+    final required = AppVersionService.updateRequired.value;
+    if (required && !_updateScreenShown) {
+      _updateScreenShown = true;
+      nav.push(MaterialPageRoute(
+        builder: (_) => const UpdateRequiredScreen(),
+        settings: const RouteSettings(name: _updateRouteName),
+      ));
+    } else if (!required && _updateScreenShown) {
+      _updateScreenShown = false;
+      nav.popUntil((route) => route.settings.name != _updateRouteName);
+    }
+  }
+
   void _handleLink(Uri uri) {
+    if (AppVersionService.updateRequired.value) return;
     final nav = _navigatorKey.currentState;
     if (nav == null) return;
     final segments = uri.pathSegments;
