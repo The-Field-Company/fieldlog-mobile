@@ -52,6 +52,7 @@ class _FormkitRendererState extends State<FormkitRenderer> {
   Future<void> _submit() async {
     if (_submitting) return;
     if (!_formKey.currentState!.validate()) return;
+    FocusScope.of(context).unfocus();
     setState(() => _submitting = true);
     try {
       await widget.onSubmit(Map.from(_data));
@@ -152,6 +153,8 @@ class _FormkitRendererState extends State<FormkitRenderer> {
         return FileFieldWidget(
           label: comp.label,
           isRequired: comp.isRequired,
+          accepts: comp.accepts,
+          initialValue: _data[comp.key] as Map<String, dynamic>?,
           onChanged: (v) {
             if (v == null) {
               _data.remove(comp.key);
@@ -214,9 +217,15 @@ class _FormkitRendererState extends State<FormkitRenderer> {
       child: Column(
         children: [
           Expanded(
-            child: ListView(
-              padding: const EdgeInsets.all(24),
-              children: components.map(_buildField).toList(),
+            child: AbsorbPointer(
+              absorbing: _submitting,
+              child: FocusScope(
+                canRequestFocus: !_submitting,
+                child: ListView(
+                  padding: const EdgeInsets.all(24),
+                  children: components.map(_buildField).toList(),
+                ),
+              ),
             ),
           ),
           // Submit button bar

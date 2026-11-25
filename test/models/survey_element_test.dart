@@ -272,4 +272,33 @@ void main() {
       expect(page.elements, isEmpty);
     });
   });
+
+  group('SurveyElement.accepts', () {
+    test('preserves accepts property on file questions', () {
+      final audio = SurveyElement.fromJson({
+        'type': 'file',
+        'name': 'recording',
+        'title': 'Recording',
+        'accepts': 'audio',
+      });
+      expect(audio.accepts, 'audio');
+
+      final both = SurveyElement.fromJson({
+        'type': 'file',
+        'name': 'media',
+        'title': 'Media',
+        'accepts': 'image,audio',
+      });
+      expect(both.accepts, 'image,audio');
+    });
+
+    test('is null when accepts is omitted', () {
+      final photo = SurveyElement.fromJson({
+        'type': 'file',
+        'name': 'photo',
+        'title': 'Photo',
+      });
+      expect(photo.accepts, isNull);
+    });
+  });
 }

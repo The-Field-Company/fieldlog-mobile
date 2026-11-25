@@ -53,6 +53,8 @@
 		<string>FieldLog needs camera access to capture photos for field observations.</string>
 		<key>NSPhotoLibraryUsageDescription</key>
 		<string>FieldLog needs photo library access to attach images to field observations.</string>
+		<key>NSMicrophoneUsageDescription</key>
+		<string>FieldLog needs microphone access to record audio for field observations.</string>
 		<key>UIStatusBarHidden</key>
 		<false/>
 	</dict>

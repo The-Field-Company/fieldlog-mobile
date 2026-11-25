@@ -7,6 +7,7 @@ class FormComponent {
   final num? min;
   final num? max;
   final num? step;
+  final String? accepts;
   final List<FormOption> options;
 
   FormComponent({
@@ -18,6 +19,7 @@ class FormComponent {
     this.min,
     this.max,
     this.step,
+    this.accepts,
     this.options = const [],
   });
 
@@ -36,6 +38,7 @@ class FormComponent {
       min: json['min'],
       max: json['max'],
       step: json['step'],
+      accepts: json['accepts']?.toString(),
       options: values
               ?.map((v) => FormOption.fromJson(v as Map<String, dynamic>))
               .toList() ??

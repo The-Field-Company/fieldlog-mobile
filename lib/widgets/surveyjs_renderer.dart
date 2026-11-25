@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:fieldlog_mobile/app_typography.dart';
 import '../models/survey_element.dart';
+import '../services/audio_service.dart';
 import '../theme/app_colors.dart';
 import '../utils/expression_engine.dart';
 import 'field_widgets/text_field_widget.dart';
@@ -89,6 +90,7 @@ class _SurveyjsRendererState extends State<SurveyjsRenderer> {
   Future<void> _submit() async {
     if (_submitting) return;
     if (!_formKey.currentState!.validate()) return;
+    FocusScope.of(context).unfocus();
     setState(() => _submitting = true);
     try {
       await widget.onSubmit(Map.from(_data));
@@ -109,6 +111,14 @@ class _SurveyjsRendererState extends State<SurveyjsRenderer> {
   }
 
   void _prevPage() {
+    if (AudioService.isRecording) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Save or discard recording before leaving this page.'),
+        ),
+      );
+      return;
+    }
     if (_currentPage > 0) {
       setState(() {
         _currentPage--;
@@ -269,7 +279,19 @@ class _SurveyjsRendererState extends State<SurveyjsRenderer> {
         child = FileFieldWidget(
           label: element.title,
           isRequired: isRequired,
-          onChanged: (v) => _updateData(element.name, v),
+          accepts: element.accepts,
+          initialValue: _data[element.name] is Map<String, dynamic>
+              ? _data[element.name] as Map<String, dynamic>
+              : null,
+          onChanged: (v) {
+            setState(() {
+              if (v == null) {
+                _data.remove(element.name);
+              } else {
+                _data[element.name] = v;
+              }
+            });
+          },
         );
       default:
         child = Padding(
@@ -544,9 +566,15 @@ class _SurveyjsRendererState extends State<SurveyjsRenderer> {
             ),
           // Form fields
           Expanded(
-            child: ListView(
-              padding: const EdgeInsets.all(24),
-              children: currentPage.elements.map(_buildElement).toList(),
+            child: AbsorbPointer(
+              absorbing: _submitting,
+              child: FocusScope(
+                canRequestFocus: !_submitting,
+                child: ListView(
+                  padding: const EdgeInsets.all(24),
+                  children: currentPage.elements.map(_buildElement).toList(),
+                ),
+              ),
             ),
           ),
           // Bottom bar
@@ -564,7 +592,7 @@ class _SurveyjsRendererState extends State<SurveyjsRenderer> {
                         if (_currentPage > 0)
                           Expanded(
                             child: OutlinedButton(
-                              onPressed: _prevPage,
+                              onPressed: _submitting ? null : _prevPage,
                               style: OutlinedButton.styleFrom(
                                 foregroundColor: AppColors.accent,
                                 side: const BorderSide(color: AppColors.accent),
