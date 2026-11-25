@@ -4,19 +4,26 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fieldlog_mobile/services/audio_service.dart';
+import 'package:fieldlog_mobile/utils/attachment_accepts.dart';
 import 'package:fieldlog_mobile/widgets/field_widgets/file_field_widget.dart';
 import 'package:fieldlog_mobile/widgets/formkit_renderer.dart';
+import 'package:fieldlog_mobile/widgets/surveyjs_renderer.dart';
 
 class _FakeAudioBackend implements AudioBackend {
   bool micPermission = true;
   bool playbackStarted = false;
   bool recordingPaused = false;
   String? activeRecordingPath;
+  final List<String> startedPlaybackPaths = [];
+  VoidCallback? onPlaybackCompleteCallback;
+  Future<int> Function(String path)? onStartPlayback;
   Future<PickedAudioFile?> Function(String destBase)? onPickAudio;
   Future<RecordedAudio?> Function(String path)? onStopRecording;
 
   @override
-  void setOnPlaybackComplete(VoidCallback? callback) {}
+  void setOnPlaybackComplete(VoidCallback? callback) {
+    onPlaybackCompleteCallback = callback;
+  }
 
   @override
   Future<bool> hasMicPermission() async => micPermission;
@@ -66,6 +73,10 @@ class _FakeAudioBackend implements AudioBackend {
   @override
   Future<int> startPlayback({required String path}) async {
     playbackStarted = true;
+    startedPlaybackPaths.add(path);
+    if (onStartPlayback != null) {
+      return onStartPlayback!(path);
+    }
     return 3000;
   }
 
@@ -384,19 +395,283 @@ void main() {
           ),
         );
 
-        final playButtons = find.byIcon(Icons.play_arrow_rounded);
-        expect(playButtons, findsNWidgets(2));
-
-        await tester.tap(playButtons.first);
+        final semantics = tester.ensureSemantics();
         await tester.pump();
-        expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
-        expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
+        try {
+          final audioAFinder = find.widgetWithText(FileFieldWidget, 'Audio A');
+          final audioBFinder = find.widgetWithText(FileFieldWidget, 'Audio B');
 
-        // Playing Audio B resets Audio A back to play icon.
-        await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+          expect(
+            find.descendant(
+              of: audioAFinder,
+              matching: find.byIcon(Icons.play_arrow_rounded),
+            ),
+            findsOneWidget,
+          );
+          expect(
+            find.descendant(
+              of: audioBFinder,
+              matching: find.byIcon(Icons.play_arrow_rounded),
+            ),
+            findsOneWidget,
+          );
+          expect(find.bySemanticsLabel('Play audio'), findsNWidgets(2));
+
+          await tester.tap(
+            find.descendant(
+              of: audioAFinder,
+              matching: find.byIcon(Icons.play_arrow_rounded),
+            ),
+          );
+          await tester.pump();
+          expect(fakeBackend.startedPlaybackPaths, [fileA.path]);
+          expect(
+            find.descendant(
+              of: audioAFinder,
+              matching: find.byIcon(Icons.pause_rounded),
+            ),
+            findsOneWidget,
+          );
+          expect(
+            find.descendant(
+              of: audioBFinder,
+              matching: find.byIcon(Icons.play_arrow_rounded),
+            ),
+            findsOneWidget,
+          );
+          expect(find.bySemanticsLabel('Pause audio'), findsOneWidget);
+
+          // Playing Audio B resets Audio A back to play icon and starts Audio B.
+          await tester.tap(
+            find.descendant(
+              of: audioBFinder,
+              matching: find.byIcon(Icons.play_arrow_rounded),
+            ),
+          );
+          await tester.pump();
+          expect(fakeBackend.startedPlaybackPaths, [fileA.path, fileB.path]);
+          expect(
+            find.descendant(
+              of: audioAFinder,
+              matching: find.byIcon(Icons.play_arrow_rounded),
+            ),
+            findsOneWidget,
+          );
+          expect(
+            find.descendant(
+              of: audioBFinder,
+              matching: find.byIcon(Icons.pause_rounded),
+            ),
+            findsOneWidget,
+          );
+        } finally {
+          semantics.dispose();
+        }
+      },
+    );
+
+    testWidgets(
+      'superseded playback start does not mark the stale preview card active',
+      (tester) async {
+        final fileA = File('${tempDir.path}/race_a.m4a')
+          ..writeAsBytesSync(List<int>.filled(2048, 1));
+        final fileB = File('${tempDir.path}/race_b.m4a')
+          ..writeAsBytesSync(List<int>.filled(2048, 2));
+        final firstStart = Completer<int>();
+        fakeBackend.onStartPlayback = (path) {
+          if (path == fileA.path) return firstStart.future;
+          return Future.value(2500);
+        };
+
+        await tester.pumpWidget(
+          wrap(
+            Column(
+              children: [
+                FileFieldWidget(
+                  label: 'Audio A',
+                  accepts: 'audio',
+                  initialValue: {
+                    'file_path': fileA.path,
+                    'file_name': 'race_a.m4a',
+                    'original_name': 'race_a.m4a',
+                    'file_size': 2048,
+                  },
+                  onChanged: (_) {},
+                ),
+                FileFieldWidget(
+                  label: 'Audio B',
+                  accepts: 'audio',
+                  initialValue: {
+                    'file_path': fileB.path,
+                    'file_name': 'race_b.m4a',
+                    'original_name': 'race_b.m4a',
+                    'file_size': 2048,
+                  },
+                  onChanged: (_) {},
+                ),
+              ],
+            ),
+          ),
+        );
+
+        final audioAFinder = find.widgetWithText(FileFieldWidget, 'Audio A');
+        final audioBFinder = find.widgetWithText(FileFieldWidget, 'Audio B');
+
+        await tester.tap(
+          find.descendant(
+            of: audioAFinder,
+            matching: find.byIcon(Icons.play_arrow_rounded),
+          ),
+        );
         await tester.pump();
-        expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
-        expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
+
+        await tester.tap(
+          find.descendant(
+            of: audioBFinder,
+            matching: find.byIcon(Icons.play_arrow_rounded),
+          ),
+        );
+        await tester.pump();
+
+        firstStart.complete(3000);
+        await tester.pumpAndSettle();
+
+        expect(
+          find.descendant(
+            of: audioAFinder,
+            matching: find.byIcon(Icons.play_arrow_rounded),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(
+            of: audioBFinder,
+            matching: find.byIcon(Icons.pause_rounded),
+          ),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      'clears stale recording validation error when oversized recording is discarded',
+      (tester) async {
+        final formKey = GlobalKey<FormState>();
+        fakeBackend.onStopRecording = (path) async {
+          final out = File(path)..writeAsBytesSync(const [1, 2, 3, 4]);
+          return RecordedAudio(
+            path: out.path,
+            size: maxAudioBytes + 1,
+            durationMs: 1000,
+          );
+        };
+
+        await tester.pumpWidget(
+          wrap(
+            Form(
+              key: formKey,
+              child: FileFieldWidget(
+                label: 'Voice Note',
+                accepts: 'audio',
+                onChanged: (_) {},
+              ),
+            ),
+          ),
+        );
+
+        await tester.tap(find.text('Add audio'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Record Audio'));
+        await tester.pump();
+
+        expect(formKey.currentState!.validate(), isFalse);
+        await tester.pump();
+        expect(
+          find.text('Save or discard recording before submitting'),
+          findsOneWidget,
+        );
+
+        await tester.tap(find.text('Save'));
+        await tester.pumpAndSettle();
+
+        expect(
+          find.text('Save or discard recording before submitting'),
+          findsNothing,
+        );
+        expect(find.textContaining('Recording too large'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'SurveyjsRenderer ignores array file defaultValue and blocks Previous while recording',
+      (tester) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SurveyjsRenderer(
+                schema: const {
+                  'pages': [
+                    {
+                      'name': 'page1',
+                      'elements': [
+                        {
+                          'type': 'file',
+                          'name': 'intro_file',
+                          'title': 'Intro File',
+                          'defaultValue': [
+                            {'name': 'preset.jpg'},
+                          ],
+                        },
+                      ],
+                    },
+                    {
+                      'name': 'page2',
+                      'elements': [
+                        {
+                          'type': 'file',
+                          'name': 'voice_note',
+                          'title': 'Voice Note',
+                          'accepts': 'audio',
+                        },
+                      ],
+                    },
+                  ],
+                },
+                onSubmit: (_) async {},
+              ),
+            ),
+          ),
+        );
+
+        expect(find.text('Intro File'), findsOneWidget);
+        await tester.tap(find.text('Next'));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Voice Note'), findsOneWidget);
+        await tester.tap(find.text('Add audio'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Record Audio'));
+        await tester.pump();
+        expect(find.text('Save'), findsOneWidget);
+
+        await tester.tap(find.text('Previous'));
+        await tester.pump();
+        expect(find.text('Voice Note'), findsOneWidget);
+        expect(find.text('Save'), findsOneWidget);
+        expect(
+          find.text('Save or discard recording before leaving this page.'),
+          findsOneWidget,
+        );
+
+        await tester.tap(find.text('Discard'));
+        await tester.pumpAndSettle();
+        ScaffoldMessenger.of(
+          tester.element(find.byType(SurveyjsRenderer)),
+        ).hideCurrentSnackBar();
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Previous'));
+        await tester.pumpAndSettle();
+        expect(find.text('Intro File'), findsOneWidget);
       },
     );
 

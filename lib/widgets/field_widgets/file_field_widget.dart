@@ -45,6 +45,7 @@ class _FileFieldWidgetState extends State<FileFieldWidget>
   bool _isRecording = false;
   bool _isBusy = false;
   String? _recordingFileId;
+  String? _recordingPath;
 
   Set<AttachmentKind> get _acceptedKinds => parseAcceptedKinds(widget.accepts);
   bool get _allowsImage => _acceptedKinds.contains(AttachmentKind.image);
@@ -310,6 +311,7 @@ class _FileFieldWidgetState extends State<FileFieldWidget>
       setState(() {
         _isRecording = true;
         _recordingFileId = id;
+        _recordingPath = path;
       });
       updateKeepAlive();
     } finally {
@@ -322,17 +324,19 @@ class _FileFieldWidgetState extends State<FileFieldWidget>
     final saved = File(recorded.path);
 
     if (recorded.size > maxAudioBytes) {
-      await _deleteLocalFile(saved);
       if (mounted) {
         setState(() {
           _isRecording = false;
           _recordingFileId = null;
+          _recordingPath = null;
         });
+        _clearFieldErrorIfValid(_file);
         updateKeepAlive();
         _showSnackBar(
           'Recording too large (max ${maxMbForKind(AttachmentKind.audio)} MB).',
         );
       }
+      await _deleteLocalFile(saved);
       return;
     }
 
@@ -350,6 +354,7 @@ class _FileFieldWidgetState extends State<FileFieldWidget>
     setState(() {
       _isRecording = false;
       _recordingFileId = null;
+      _recordingPath = null;
       _file = saved;
       _originalName = displayName;
       _fileSize = recorded.size;
@@ -375,6 +380,7 @@ class _FileFieldWidgetState extends State<FileFieldWidget>
     setState(() {
       _isRecording = false;
       _recordingFileId = null;
+      _recordingPath = null;
     });
     _clearFieldErrorIfValid(_file);
     updateKeepAlive();
@@ -506,7 +512,7 @@ class _FileFieldWidgetState extends State<FileFieldWidget>
                   sheetContext: ctx,
                   icon: Icons.audio_file_outlined,
                   title: 'Choose Audio File',
-                  subtitle: 'M4A, MP3, WAV, OGG, FLAC up to 50 MB',
+                  subtitle: 'M4A, MP3, WAV, OGG, OPUS, WEBM, AAC, FLAC up to 50 MB',
                   onTap: _pickAudioFile,
                 ),
               ],
@@ -665,6 +671,7 @@ class _FileFieldWidgetState extends State<FileFieldWidget>
               if (_isRecording)
                 AudioRecorderCard(
                   ownerId: _ownerId,
+                  recordingPath: _recordingPath,
                   onSaved: _handleRecordingSaved,
                   onDiscarded: _handleRecordingDiscarded,
                   onError: _showSnackBar,

@@ -225,7 +225,21 @@ class _PluginAudioBackend implements AudioBackend {
     _recordingSegmentStartedAt = null;
     _recordingPath = null;
 
-    final stoppedPath = await _audioRecorder.stop() ?? fallbackPath;
+    final String? stoppedPath;
+    try {
+      stoppedPath = await _audioRecorder.stop() ?? fallbackPath;
+    } catch (_) {
+      try {
+        await _recorder?.cancel();
+      } catch (_) {}
+      if (fallbackPath != null && fallbackPath.isNotEmpty) {
+        try {
+          final partial = File(fallbackPath);
+          if (await partial.exists()) await partial.delete();
+        } catch (_) {}
+      }
+      rethrow;
+    }
     if (stoppedPath == null || stoppedPath.isEmpty) return null;
 
     final file = File(stoppedPath);
@@ -373,6 +387,13 @@ class AudioService {
   static String? _activeRecordingOwner;
   static String? _activePlaybackOwner;
   static VoidCallback? _onPlaybackInterrupted;
+  static int _playbackSeq = 0;
+  static Future<void>? _pendingPlaybackStart;
+
+  static bool get isRecording => _activeRecordingOwner != null;
+
+  static bool isPlaybackOwner(String ownerId) =>
+      _activePlaybackOwner == ownerId;
 
   @visibleForTesting
   static set backend(AudioBackend? override) {
@@ -380,6 +401,8 @@ class AudioService {
     _activeRecordingOwner = null;
     _activePlaybackOwner = null;
     _onPlaybackInterrupted = null;
+    _playbackSeq = 0;
+    _pendingPlaybackStart = null;
   }
 
   static void setOnPlaybackComplete(VoidCallback? callback) =>
@@ -403,6 +426,7 @@ class AudioService {
     // Notify any active playback owner before recording stops playback.
     if (_activePlaybackOwner != null) {
       final interrupted = _onPlaybackInterrupted;
+      _playbackSeq++;
       _activePlaybackOwner = null;
       _onPlaybackInterrupted = null;
       _backend.setOnPlaybackComplete(null);
@@ -455,7 +479,7 @@ class AudioService {
     return _backend.getRecordingAmplitude();
   }
 
-  static Future<int> startPlayback({
+  static Future<int?> startPlayback({
     required String path,
     String ownerId = _defaultOwner,
     VoidCallback? onComplete,
@@ -474,24 +498,52 @@ class AudioService {
       previousInterrupted?.call();
     }
 
+    final seq = ++_playbackSeq;
     _activePlaybackOwner = ownerId;
     _onPlaybackInterrupted = onInterrupted;
-    _backend.setOnPlaybackComplete(() {
-      if (_activePlaybackOwner != ownerId) return;
-      _activePlaybackOwner = null;
-      _onPlaybackInterrupted = null;
-      onComplete?.call();
-    });
+
+    final priorStart = _pendingPlaybackStart;
+    final startCompleter = Completer<void>();
+    _pendingPlaybackStart = startCompleter.future;
 
     try {
-      return await _backend.startPlayback(path: path);
+      if (priorStart != null) {
+        await priorStart.catchError((_) {});
+      }
+      if (_playbackSeq != seq || _activePlaybackOwner != ownerId) {
+        return null;
+      }
+
+      _backend.setOnPlaybackComplete(() {
+        if (_playbackSeq != seq || _activePlaybackOwner != ownerId) return;
+        _activePlaybackOwner = null;
+        _onPlaybackInterrupted = null;
+        _backend.setOnPlaybackComplete(null);
+        onComplete?.call();
+      });
+
+      final durationMs = await _backend.startPlayback(path: path);
+      if (_playbackSeq != seq || _activePlaybackOwner != ownerId) {
+        if (_activePlaybackOwner == null) {
+          await _backend.stopPlayback();
+        }
+        return null;
+      }
+      return durationMs;
     } catch (_) {
-      if (_activePlaybackOwner == ownerId) {
+      if (_playbackSeq == seq && _activePlaybackOwner == ownerId) {
         _activePlaybackOwner = null;
         _onPlaybackInterrupted = null;
         _backend.setOnPlaybackComplete(null);
       }
       rethrow;
+    } finally {
+      if (identical(_pendingPlaybackStart, startCompleter.future)) {
+        _pendingPlaybackStart = null;
+      }
+      if (!startCompleter.isCompleted) {
+        startCompleter.complete();
+      }
     }
   }
 
@@ -507,6 +559,7 @@ class AudioService {
 
   static Future<void> stopPlayback({String ownerId = _defaultOwner}) async {
     if (_activePlaybackOwner != ownerId) return;
+    _playbackSeq++;
     _activePlaybackOwner = null;
     _onPlaybackInterrupted = null;
     _backend.setOnPlaybackComplete(null);

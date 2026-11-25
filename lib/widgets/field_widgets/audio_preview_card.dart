@@ -155,6 +155,9 @@ class _AudioPreviewCardState extends State<AudioPreviewCard> {
           await AudioService.stopPlayback(ownerId: widget.ownerId);
           return;
         }
+        if (durationMs == null || !AudioService.isPlaybackOwner(widget.ownerId)) {
+          return;
+        }
         setState(() {
           _isPlaying = true;
           _isPaused = false;
@@ -213,22 +216,29 @@ class _AudioPreviewCardState extends State<AudioPreviewCard> {
       ),
       child: Row(
         children: [
-          InkWell(
-            onTap: _togglePlayback,
-            customBorder: const CircleBorder(),
-            child: Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: _isPlaying
-                    ? AppColors.accent
-                    : AppColors.accent.withValues(alpha: 0.12),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                color: _isPlaying ? Colors.white : AppColors.accent,
-                size: 22,
+          Semantics(
+            container: true,
+            button: true,
+            label: _isPlaying ? 'Pause audio' : 'Play audio',
+            excludeSemantics: true,
+            child: InkWell(
+              onTap: _togglePlayback,
+              customBorder: const CircleBorder(),
+              child: Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: _isPlaying
+                      ? AppColors.accent
+                      : AppColors.accent.withValues(alpha: 0.12),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                  semanticLabel: _isPlaying ? 'Pause audio' : 'Play audio',
+                  color: _isPlaying ? Colors.white : AppColors.accent,
+                  size: 22,
+                ),
               ),
             ),
           ),

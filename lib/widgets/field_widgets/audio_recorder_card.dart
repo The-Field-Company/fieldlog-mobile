@@ -4,9 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:fieldlog_mobile/app_typography.dart';
 import '../../services/audio_service.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/attachment_accepts.dart';
 
 class AudioRecorderCard extends StatefulWidget {
   final String ownerId;
+  final String? recordingPath;
+  final Duration maxDuration;
+  final int maxBytes;
   final ValueChanged<RecordedAudio> onSaved;
   final VoidCallback onDiscarded;
   final ValueChanged<String> onError;
@@ -17,6 +21,9 @@ class AudioRecorderCard extends StatefulWidget {
     required this.onSaved,
     required this.onDiscarded,
     required this.onError,
+    this.recordingPath,
+    this.maxDuration = const Duration(minutes: 50),
+    this.maxBytes = maxAudioBytes - 512 * 1024,
   });
 
   @override
@@ -30,6 +37,8 @@ class _AudioRecorderCardState extends State<AudioRecorderCard>
   bool _isPaused = false;
   bool _isBusy = false;
   bool _finished = false;
+  bool _checkingSize = false;
+  int _sizeCheckTick = 0;
   Duration _elapsed = Duration.zero;
   Duration _accumulated = Duration.zero;
   DateTime? _segmentStartedAt;
@@ -74,9 +83,18 @@ class _AudioRecorderCardState extends State<AudioRecorderCard>
       if (!mounted || _isPaused || _finished) return;
       final startedAt = _segmentStartedAt;
       if (startedAt == null) return;
+      final nextElapsed = _accumulated + DateTime.now().difference(startedAt);
       setState(() {
-        _elapsed = _accumulated + DateTime.now().difference(startedAt);
+        _elapsed = nextElapsed;
       });
+      if (nextElapsed >= widget.maxDuration) {
+        unawaited(_save(limitReached: true));
+        return;
+      }
+      final path = widget.recordingPath;
+      if (path != null && !_checkingSize && (++_sizeCheckTick % 8 == 0)) {
+        unawaited(_checkRecordingSize(path));
+      }
     });
 
     _amplitudeTimer = Timer.periodic(const Duration(milliseconds: 120), (
@@ -94,6 +112,23 @@ class _AudioRecorderCardState extends State<AudioRecorderCard>
         _waveformLevels.add(level.clamp(0.08, 1.0));
       });
     });
+  }
+
+  Future<void> _checkRecordingSize(String path) async {
+    _checkingSize = true;
+    try {
+      final file = File(path);
+      if (await file.exists()) {
+        final length = await file.length();
+        if (mounted && !_finished && !_isPaused && length >= widget.maxBytes) {
+          unawaited(_save(limitReached: true));
+        }
+      }
+    } catch (_) {
+      // Ignore transient I/O errors while the recorder is writing.
+    } finally {
+      _checkingSize = false;
+    }
   }
 
   void _stopTimers() {
@@ -143,7 +178,7 @@ class _AudioRecorderCardState extends State<AudioRecorderCard>
     }
   }
 
-  Future<void> _save() async {
+  Future<void> _save({bool limitReached = false}) async {
     if (_isBusy || _finished) return;
     _isBusy = true;
     _finished = true;
@@ -180,6 +215,11 @@ class _AudioRecorderCardState extends State<AudioRecorderCard>
     }
 
     widget.onSaved(recorded);
+    if (limitReached && mounted) {
+      widget.onError(
+        'Maximum recording size (${maxMbForKind(AttachmentKind.audio)} MB) reached — clip saved.',
+      );
+    }
   }
 
   Future<void> _discard() async {

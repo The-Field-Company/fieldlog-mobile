@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:fieldlog_mobile/app_typography.dart';
 import '../models/survey_element.dart';
+import '../services/audio_service.dart';
 import '../theme/app_colors.dart';
 import '../utils/expression_engine.dart';
 import 'field_widgets/text_field_widget.dart';
@@ -110,6 +111,14 @@ class _SurveyjsRendererState extends State<SurveyjsRenderer> {
   }
 
   void _prevPage() {
+    if (AudioService.isRecording) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Save or discard recording before leaving this page.'),
+        ),
+      );
+      return;
+    }
     if (_currentPage > 0) {
       setState(() {
         _currentPage--;
@@ -271,7 +280,9 @@ class _SurveyjsRendererState extends State<SurveyjsRenderer> {
           label: element.title,
           isRequired: isRequired,
           accepts: element.accepts,
-          initialValue: _data[element.name] as Map<String, dynamic>?,
+          initialValue: _data[element.name] is Map<String, dynamic>
+              ? _data[element.name] as Map<String, dynamic>
+              : null,
           onChanged: (v) {
             setState(() {
               if (v == null) {
