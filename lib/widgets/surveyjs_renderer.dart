@@ -89,6 +89,7 @@ class _SurveyjsRendererState extends State<SurveyjsRenderer> {
   Future<void> _submit() async {
     if (_submitting) return;
     if (!_formKey.currentState!.validate()) return;
+    FocusScope.of(context).unfocus();
     setState(() => _submitting = true);
     try {
       await widget.onSubmit(Map.from(_data));
@@ -554,9 +555,15 @@ class _SurveyjsRendererState extends State<SurveyjsRenderer> {
             ),
           // Form fields
           Expanded(
-            child: ListView(
-              padding: const EdgeInsets.all(24),
-              children: currentPage.elements.map(_buildElement).toList(),
+            child: AbsorbPointer(
+              absorbing: _submitting,
+              child: FocusScope(
+                canRequestFocus: !_submitting,
+                child: ListView(
+                  padding: const EdgeInsets.all(24),
+                  children: currentPage.elements.map(_buildElement).toList(),
+                ),
+              ),
             ),
           ),
           // Bottom bar
@@ -574,7 +581,7 @@ class _SurveyjsRendererState extends State<SurveyjsRenderer> {
                         if (_currentPage > 0)
                           Expanded(
                             child: OutlinedButton(
-                              onPressed: _prevPage,
+                              onPressed: _submitting ? null : _prevPage,
                               style: OutlinedButton.styleFrom(
                                 foregroundColor: AppColors.accent,
                                 side: const BorderSide(color: AppColors.accent),

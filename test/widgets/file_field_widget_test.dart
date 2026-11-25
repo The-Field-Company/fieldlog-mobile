@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fieldlog_mobile/services/audio_service.dart';
 import 'package:fieldlog_mobile/widgets/field_widgets/file_field_widget.dart';
+import 'package:fieldlog_mobile/widgets/formkit_renderer.dart';
 
 class _FakeAudioBackend implements AudioBackend {
   bool micPermission = true;
@@ -526,5 +528,72 @@ void main() {
 
       expect(find.text('Voice Note is required'), findsNothing);
     });
+
+    testWidgets(
+      'blocks removing an attached audio file while form submission is in flight',
+      (tester) async {
+        final submitCompleter = Completer<void>();
+        Map<String, dynamic>? submitted;
+        fakeBackend.onPickAudio = (destBase) async {
+          final out = File('$destBase.m4a');
+          out.writeAsBytesSync(List<int>.filled(2048, 9));
+          return PickedAudioFile(
+            path: out.path,
+            name: 'field_clip.m4a',
+            size: 2048,
+          );
+        };
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: FormkitRenderer(
+                components: const [
+                  {
+                    'key': 'audio_note',
+                    'label': 'Audio Note',
+                    'type': 'file',
+                    'accepts': 'audio',
+                  },
+                ],
+                onSubmit: (data) {
+                  submitted = data;
+                  return submitCompleter.future;
+                },
+              ),
+            ),
+          ),
+        );
+
+        await tester.tap(find.text('Add audio'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Choose Audio File'));
+        await tester.pumpAndSettle();
+
+        expect(find.text('field_clip.m4a'), findsOneWidget);
+
+        await tester.tap(find.text('Submit'));
+        await tester.pump();
+
+        expect(submitted, isNotNull);
+        final filePath =
+            (submitted!['audio_note'] as Map<String, dynamic>)['file_path']
+                as String;
+        expect(File(filePath).existsSync(), isTrue);
+
+        // Attempt to remove the attachment while submission is awaiting GPS/DB.
+        await tester.tap(
+          find.byIcon(Icons.close_rounded),
+          warnIfMissed: false,
+        );
+        await tester.pump();
+
+        expect(File(filePath).existsSync(), isTrue);
+        expect(find.text('field_clip.m4a'), findsOneWidget);
+
+        submitCompleter.complete();
+        await tester.pump();
+      },
+    );
   });
 }

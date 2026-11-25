@@ -14,13 +14,23 @@ import '../utils/attachment_accepts.dart';
 /// PowerSync backend connector mirroring ui/src/services/powersync/connector.js
 class _StreamingFileRequest extends http.BaseRequest {
   final File file;
+  final VoidCallback? onActivity;
 
-  _StreamingFileRequest(super.method, super.url, this.file);
+  _StreamingFileRequest(
+    super.method,
+    super.url,
+    this.file, {
+    this.onActivity,
+  });
 
   @override
   http.ByteStream finalize() {
     super.finalize();
-    return http.ByteStream(file.openRead());
+    final stream = file.openRead().map((chunk) {
+      onActivity?.call();
+      return chunk;
+    });
+    return http.ByteStream(stream);
   }
 }
 
@@ -148,6 +158,97 @@ class FieldLogConnector extends PowerSyncBackendConnector {
   /// After [_maxRetries] attempts, throws to let PowerSync handle the retry.
   static const _maxRetries = 3;
   static const _binaryUploadTimeout = Duration(seconds: 300);
+  static const _uploadStallTimeout = Duration(seconds: 60);
+  // Minimum sustained upload rate (~512 kbit/s) used to scale the total
+  // deadline so progressing large uploads on slow field links can finish.
+  static const _minUploadBytesPerSecond = 64 * 1024;
+  static const _uploadDeadlineOverhead = Duration(seconds: 120);
+
+  @visibleForTesting
+  static Duration totalUploadDeadlineForBytes(int contentLength) {
+    final transferSeconds = contentLength > 0
+        ? (contentLength / _minUploadBytesPerSecond).ceil()
+        : 0;
+    final computed =
+        Duration(seconds: transferSeconds) + _uploadDeadlineOverhead;
+    return computed > _binaryUploadTimeout ? computed : _binaryUploadTimeout;
+  }
+
+  /// Executes a single backpressure-aware streaming PUT attempt guarded by both
+  /// an inactivity [stallTimeout] (reset on every streamed request/response
+  /// chunk and header arrival) and an overall [totalDeadline].
+  /// Closes [client] before completing with [TimeoutException] or returning.
+  @visibleForTesting
+  static Future<int> sendStreamingPutAttempt({
+    required http.Client client,
+    required Uri url,
+    required File file,
+    required int contentLength,
+    required String contentType,
+    Duration stallTimeout = _uploadStallTimeout,
+    Duration? totalDeadline,
+  }) async {
+    final deadline = totalDeadline ?? totalUploadDeadlineForBytes(contentLength);
+    final timeoutCompleter = Completer<Never>();
+    Timer? stallTimer;
+    Timer? totalTimer;
+
+    void failWithTimeout(String reason, Duration duration) {
+      if (!timeoutCompleter.isCompleted) {
+        timeoutCompleter.completeError(TimeoutException(reason, duration));
+      }
+      client.close();
+    }
+
+    void resetStallTimer() {
+      stallTimer?.cancel();
+      if (timeoutCompleter.isCompleted) return;
+      stallTimer = Timer(
+        stallTimeout,
+        () => failWithTimeout(
+          'Upload stalled for ${stallTimeout.inSeconds}s',
+          stallTimeout,
+        ),
+      );
+    }
+
+    totalTimer = Timer(
+      deadline,
+      () => failWithTimeout(
+        'Upload exceeded total deadline of ${deadline.inSeconds}s',
+        deadline,
+      ),
+    );
+    resetStallTimer();
+
+    try {
+      final attemptFuture = () async {
+        final request = _StreamingFileRequest(
+          'PUT',
+          url,
+          file,
+          onActivity: resetStallTimer,
+        )
+          ..headers['Content-Type'] = contentType
+          ..contentLength = contentLength;
+        final streamedResponse = await client.send(request);
+        resetStallTimer();
+        await streamedResponse.stream
+            .listen((_) => resetStallTimer(), cancelOnError: true)
+            .asFuture<void>();
+        return streamedResponse.statusCode;
+      }();
+      // Avoid unhandled async errors if the underlying socket errors after
+      // timing out and closing the client.
+      attemptFuture.ignore();
+      timeoutCompleter.future.ignore();
+      return await Future.any<int>([attemptFuture, timeoutCompleter.future]);
+    } finally {
+      stallTimer?.cancel();
+      totalTimer.cancel();
+      client.close();
+    }
+  }
 
   Future<List<String>> _uploadPendingFiles(
     Map<String, dynamic> data,
@@ -330,18 +431,13 @@ class FieldLogConnector extends PowerSyncBackendConnector {
       attempt++;
       final client = SentryHttpClient();
       try {
-        final attemptFuture = () async {
-          final request = _StreamingFileRequest('PUT', url, file)
-            ..headers['Content-Type'] = contentType
-            ..contentLength = contentLength;
-          final streamedResponse = await client.send(request);
-          await streamedResponse.stream.drain<void>();
-          return streamedResponse.statusCode;
-        }();
-        // Avoid unhandled async errors if the underlying socket errors after
-        // timing out and closing the client in `finally`.
-        attemptFuture.ignore();
-        final statusCode = await attemptFuture.timeout(_binaryUploadTimeout);
+        final statusCode = await sendStreamingPutAttempt(
+          client: client,
+          url: url,
+          file: file,
+          contentLength: contentLength,
+          contentType: contentType,
+        );
 
         if (statusCode >= 200 && statusCode < 300) return;
 
