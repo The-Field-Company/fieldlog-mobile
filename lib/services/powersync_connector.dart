@@ -12,6 +12,18 @@ import 'sync_error_service.dart';
 import '../utils/attachment_accepts.dart';
 
 /// PowerSync backend connector mirroring ui/src/services/powersync/connector.js
+class _StreamingFileRequest extends http.BaseRequest {
+  final File file;
+
+  _StreamingFileRequest(super.method, super.url, this.file);
+
+  @override
+  http.ByteStream finalize() {
+    super.finalize();
+    return http.ByteStream(file.openRead());
+  }
+}
+
 class FieldLogConnector extends PowerSyncBackendConnector {
   static const _httpTimeout = Duration(seconds: 30);
 
@@ -314,116 +326,83 @@ class FieldLogConnector extends PowerSyncBackendConnector {
     required String fileName,
   }) async {
     int attempt = 0;
-    final client = SentryHttpClient();
-    try {
-      while (true) {
-        attempt++;
-        try {
-          final request = http.StreamedRequest('PUT', url)
+    while (true) {
+      attempt++;
+      final client = SentryHttpClient();
+      try {
+        final attemptFuture = () async {
+          final request = _StreamingFileRequest('PUT', url, file)
             ..headers['Content-Type'] = contentType
             ..contentLength = contentLength;
-          final responseFuture = client
-              .send(request)
-              .timeout(_binaryUploadTimeout);
-
-          final pumpDone = Completer<void>();
-          Object? pumpError;
-          StackTrace? pumpStack;
-          final fileSub = file.openRead().listen(
-            request.sink.add,
-            onError: (Object error, StackTrace stackTrace) {
-              pumpError = error;
-              pumpStack = stackTrace;
-              request.sink.addError(error, stackTrace);
-              request.sink.close().ignore();
-              if (!pumpDone.isCompleted) pumpDone.complete();
-            },
-            onDone: () {
-              request.sink.close().whenComplete(() {
-                if (!pumpDone.isCompleted) pumpDone.complete();
-              }).ignore();
-            },
-            cancelOnError: true,
-          );
-
-          final http.StreamedResponse streamedResponse;
-          try {
-            streamedResponse = await responseFuture;
-          } catch (_) {
-            await fileSub.cancel();
-            request.sink.close().ignore();
-            rethrow;
-          }
-
-          await pumpDone.future;
-          if (pumpError != null) {
-            await streamedResponse.stream.drain<void>();
-            Error.throwWithStackTrace(pumpError!, pumpStack!);
-          }
+          final streamedResponse = await client.send(request);
           await streamedResponse.stream.drain<void>();
-          final statusCode = streamedResponse.statusCode;
+          return streamedResponse.statusCode;
+        }();
+        // Avoid unhandled async errors if the underlying socket errors after
+        // timing out and closing the client in `finally`.
+        attemptFuture.ignore();
+        final statusCode = await attemptFuture.timeout(_binaryUploadTimeout);
 
-          if (statusCode >= 200 && statusCode < 300) return;
+        if (statusCode >= 200 && statusCode < 300) return;
 
-          if (statusCode >= 400 && statusCode < 500) {
-            final error = Exception(
-              'R2 PUT failed permanently ($statusCode) for $fileName',
-            );
-            await Sentry.captureException(
-              error,
-              withScope: (scope) {
-                scope.setTag('file_name', fileName);
-                scope.setTag('http_status', statusCode.toString());
-              },
-            );
-            throw error;
-          }
-
-          if (attempt > _maxRetries) {
-            final error = Exception(
-              'R2 PUT failed after $_maxRetries attempts ($statusCode) for $fileName',
-            );
-            await Sentry.captureException(
-              error,
-              withScope: (scope) {
-                scope.setTag('file_name', fileName);
-                scope.setTag('http_status', statusCode.toString());
-              },
-            );
-            throw error;
-          }
-
-          if (kDebugMode) {
-            debugPrint(
-              '[PowerSync] R2 PUT 5xx on attempt $attempt for $fileName ($statusCode), retrying...',
-            );
-          }
-        } on SocketException {
-          // Device is offline — do not burn retry attempts.
-          // PowerSync retries the transaction when connectivity is restored.
-          throw Exception('R2 PUT failed: device offline ($fileName)');
-        } on TimeoutException {
-          if (attempt > _maxRetries) {
-            final error = Exception(
-              'R2 PUT timed out after $_maxRetries attempts for $fileName',
-            );
-            await Sentry.captureException(
-              error,
-              withScope: (scope) => scope.setTag('file_name', fileName),
-            );
-            throw error;
-          }
-          if (kDebugMode) {
-            debugPrint(
-              '[PowerSync] R2 PUT timeout on attempt $attempt for $fileName, retrying...',
-            );
-          }
+        if (statusCode >= 400 && statusCode < 500) {
+          final error = Exception(
+            'R2 PUT failed permanently ($statusCode) for $fileName',
+          );
+          await Sentry.captureException(
+            error,
+            withScope: (scope) {
+              scope.setTag('file_name', fileName);
+              scope.setTag('http_status', statusCode.toString());
+            },
+          );
+          throw error;
         }
 
-        await Future.delayed(Duration(seconds: 1 << (attempt - 1)));
+        if (attempt > _maxRetries) {
+          final error = Exception(
+            'R2 PUT failed after $_maxRetries attempts ($statusCode) for $fileName',
+          );
+          await Sentry.captureException(
+            error,
+            withScope: (scope) {
+              scope.setTag('file_name', fileName);
+              scope.setTag('http_status', statusCode.toString());
+            },
+          );
+          throw error;
+        }
+
+        if (kDebugMode) {
+          debugPrint(
+            '[PowerSync] R2 PUT 5xx on attempt $attempt for $fileName ($statusCode), retrying...',
+          );
+        }
+      } on SocketException {
+        // Device is offline — do not burn retry attempts.
+        // PowerSync retries the transaction when connectivity is restored.
+        throw Exception('R2 PUT failed: device offline ($fileName)');
+      } on TimeoutException {
+        if (attempt > _maxRetries) {
+          final error = Exception(
+            'R2 PUT timed out after $_maxRetries attempts for $fileName',
+          );
+          await Sentry.captureException(
+            error,
+            withScope: (scope) => scope.setTag('file_name', fileName),
+          );
+          throw error;
+        }
+        if (kDebugMode) {
+          debugPrint(
+            '[PowerSync] R2 PUT timeout on attempt $attempt for $fileName, retrying...',
+          );
+        }
+      } finally {
+        client.close();
       }
-    } finally {
-      client.close();
+
+      await Future.delayed(Duration(seconds: 1 << (attempt - 1)));
     }
   }
 

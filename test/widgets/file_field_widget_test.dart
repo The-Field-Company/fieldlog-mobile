@@ -440,5 +440,91 @@ void main() {
       );
       expect(find.text('Save'), findsOneWidget);
     });
+
+    testWidgets('blocks playback while another field is recording', (
+      tester,
+    ) async {
+      final clip = File('${tempDir.path}/clip.m4a')
+        ..writeAsBytesSync(List<int>.filled(2048, 3));
+
+      await tester.pumpWidget(
+        wrap(
+          Column(
+            children: [
+              FileFieldWidget(
+                label: 'Recorder Field',
+                accepts: 'audio',
+                onChanged: (_) {},
+              ),
+              FileFieldWidget(
+                label: 'Playback Field',
+                accepts: 'audio',
+                initialValue: {
+                  'file_path': clip.path,
+                  'file_name': 'clip.m4a',
+                  'original_name': 'clip.m4a',
+                  'file_size': 2048,
+                },
+                onChanged: (_) {},
+              ),
+            ],
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Add audio'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Record Audio'));
+      await tester.pump();
+      expect(find.text('Save'), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(fakeBackend.playbackStarted, isFalse);
+      expect(
+        find.text(
+          'Finish or discard the active recording before playing audio.',
+        ),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('clears required validation error after picking an audio file', (
+      tester,
+    ) async {
+      final formKey = GlobalKey<FormState>();
+      fakeBackend.onPickAudio = (destBase) async {
+        final out = File('$destBase.m4a');
+        out.writeAsBytesSync(List<int>.filled(1024, 5));
+        return PickedAudioFile(path: out.path, name: 'bird.m4a', size: 1024);
+      };
+
+      await tester.pumpWidget(
+        wrap(
+          Form(
+            key: formKey,
+            child: FileFieldWidget(
+              label: 'Voice Note',
+              accepts: 'audio',
+              isRequired: true,
+              onChanged: (_) {},
+            ),
+          ),
+        ),
+      );
+
+      expect(formKey.currentState!.validate(), isFalse);
+      await tester.pump();
+      expect(find.text('Voice Note is required'), findsOneWidget);
+
+      await tester.tap(find.text('Add audio'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Choose Audio File'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Voice Note is required'), findsNothing);
+    });
   });
 }

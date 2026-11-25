@@ -162,6 +162,8 @@ class _AudioPreviewCardState extends State<AudioPreviewCard> {
           if (durationMs > 0) _durationMs = durationMs;
         });
         _startPlaybackPolling();
+      } on StateError catch (e) {
+        widget.onError(e.message);
       } catch (_) {
         widget.onError('Could not play audio file.');
       }

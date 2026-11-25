@@ -461,6 +461,11 @@ class AudioService {
     VoidCallback? onComplete,
     VoidCallback? onInterrupted,
   }) async {
+    if (_activeRecordingOwner != null) {
+      throw StateError(
+        'Finish or discard the active recording before playing audio.',
+      );
+    }
     if (_activePlaybackOwner != null && _activePlaybackOwner != ownerId) {
       final previousInterrupted = _onPlaybackInterrupted;
       _activePlaybackOwner = null;

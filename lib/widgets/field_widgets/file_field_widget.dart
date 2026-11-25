@@ -165,6 +165,7 @@ class _FileFieldWidgetState extends State<FileFieldWidget>
         _audioDurationMs = 0;
         _isAudio = false;
       });
+      _clearFieldErrorIfValid(saved);
       updateKeepAlive();
       if (previous != null && previous.path != saved.path) {
         await _deleteLocalFile(previous);
@@ -252,6 +253,7 @@ class _FileFieldWidgetState extends State<FileFieldWidget>
         _audioDurationMs = 0;
         _isAudio = true;
       });
+      _clearFieldErrorIfValid(saved);
       updateKeepAlive();
       if (previous != null && previous.path != saved.path) {
         await _deleteLocalFile(previous);
