@@ -8,8 +8,6 @@ import '../services/media_upload_queue_service.dart';
 import '../services/powersync_service.dart';
 import '../services/preferences_service.dart';
 
-/// A compact pill widget that shows the current sync + media upload state.
-/// Tapping opens the media upload settings & queue status sheet.
 class SyncStatusWidget extends StatefulWidget {
   final void Function(SyncStateTransition transition)? onTransition;
 
@@ -175,6 +173,8 @@ class _SyncStatusWidgetState extends State<SyncStatusWidget> {
                 color: color,
               ),
             ),
+            const SizedBox(width: 2),
+            Icon(Icons.expand_more, size: 13, color: color),
           ],
         ),
       ),
@@ -437,6 +437,10 @@ class _SyncStatusTextState extends State<SyncStatusText> {
       if (_media.isPausedForWifi) {
         icon = Icons.wifi_outlined;
         text = 'Observation synced \u2014 media waiting for Wi-Fi';
+        color = Colors.orange.shade700;
+      } else if (_media.pendingTotal > 0 && !_connected) {
+        icon = Icons.cloud_queue_outlined;
+        text = 'Observation synced \u2014 media waiting for connection';
         color = Colors.orange.shade700;
       } else if (_media.pendingTotal > 0) {
         icon = Icons.cloud_upload_outlined;

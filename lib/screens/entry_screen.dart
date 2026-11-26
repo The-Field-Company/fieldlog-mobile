@@ -5,6 +5,7 @@ import 'package:sentry_flutter/sentry_flutter.dart';
 import '../theme/app_colors.dart';
 import '../models/session.dart';
 import '../services/auth_service.dart';
+import '../services/media_upload_queue_service.dart';
 import '../services/preferences_service.dart';
 import '../services/powersync_service.dart';
 import '../services/connectivity_service.dart';
@@ -69,9 +70,66 @@ class _EntryScreenState extends State<EntryScreen> {
   }
 
   Future<void> _logout() async {
-    // disconnectAndClear() wipes all managed tables, local-only tables, and the
-    // CRUD upload queue — no manual DELETE needed and no stale data or pending
-    // ops carry over to the next user on this device.
+    final pendingMedia = MediaUploadQueueService.currentSummary.pendingTotal;
+    if (pendingMedia > 0) {
+      final confirmed = await showModalBottomSheet<bool>(
+        context: context,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+        ),
+        builder: (ctx) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Unsynced media will be lost',
+                  style: AppTypography.textStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '$pendingMedia media file(s) have not finished uploading yet. Signing out will permanently delete them from this device.',
+                  style: AppTypography.textStyle(
+                    fontSize: 13,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        child: const Text('Cancel'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () => Navigator.pop(ctx, true),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.error,
+                          foregroundColor: Colors.white,
+                        ),
+                        child: const Text('Sign out'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+    }
+
     try {
       await PowerSyncService.disconnectPowerSync();
     } catch (e, stackTrace) {

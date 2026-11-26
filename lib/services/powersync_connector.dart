@@ -10,11 +10,6 @@ import 'auth_service.dart';
 import 'media_upload_queue_service.dart';
 import 'preferences_service.dart';
 
-/// Fast-lane PowerSync backend connector.
-///
-/// Uploads only lightweight JSON observations (~2 KB) and session subscriptions
-/// so media transfers never block form sync. Binary uploads run independently
-/// in [MediaUploadQueueService].
 class FieldLogConnector extends PowerSyncBackendConnector {
   static const _httpTimeout = Duration(seconds: 30);
   static const _maxRetries = 3;
@@ -55,11 +50,13 @@ class FieldLogConnector extends PowerSyncBackendConnector {
       'Authorization': 'Bearer $token',
     };
 
+    var syncedSubmission = false;
     var enqueuedLegacyMedia = false;
 
     for (final op in transaction.crud) {
       if (op.table == 'fieldlog_submission') {
         if (op.op != UpdateType.put) continue;
+        syncedSubmission = true;
 
         final record = op.opData;
         final sessionId = record?['session_id'];
@@ -120,16 +117,11 @@ class FieldLogConnector extends PowerSyncBackendConnector {
     }
 
     await transaction.complete();
-    if (enqueuedLegacyMedia) {
+    if (syncedSubmission || enqueuedLegacyMedia) {
       MediaUploadQueueService.trigger();
     }
   }
 
-  /// Seamlessly upgrades any pre-existing unsynced submission rows created
-  /// before decoupled uploads shipped (where `data[fieldKey]` still contains
-  /// `file_path`), enqueuing their files into [MediaUploadQueueService] with
-  /// deterministic UUIDv5 attachment IDs so PowerSync retries are idempotent
-  /// and never duplicate queue rows for the same local file.
   Future<bool> _migrateLegacyPendingFiles(
     Map<String, dynamic> data, {
     required String submissionId,

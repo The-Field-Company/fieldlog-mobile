@@ -34,9 +34,6 @@ const schema = Schema([
     Column.integer('is_public'),
     Column.text('created_at'),
   ]),
-  // Local-only resumable media upload queue (decoupled from PowerSync CRUD).
-  // `id` stores the client-generated attachment_id UUID. Cleared on logout via
-  // disconnectAndClear().
   Table.localOnly('local_pending_uploads', [
     Column.text('submission_id'),
     Column.integer('session_id'),

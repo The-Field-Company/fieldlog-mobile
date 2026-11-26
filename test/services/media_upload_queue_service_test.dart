@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 
 class _InMemoryUploadStore implements MediaUploadStore {
   final Map<String, PendingUploadItem> rows = {};
+  final Set<String> pendingSubmissions = {};
 
   @override
   Future<void> insert(PendingUploadItem item) async {
@@ -24,6 +25,11 @@ class _InMemoryUploadStore implements MediaUploadStore {
   @override
   Future<List<String>> listAllLocalPaths() async {
     return [for (final r in rows.values) r.localPath];
+  }
+
+  @override
+  Future<bool> isSubmissionPendingSync(String submissionId) async {
+    return pendingSubmissions.contains(submissionId);
   }
 
   @override
@@ -740,6 +746,209 @@ void main() {
 
       expect(refreshed, isTrue);
       expect(store.rows['att-401']!.status, MediaUploadStatus.queued);
+    },
+  );
+
+  test(
+    '426 Upgrade Required is not permanent and preserves item as queued',
+    () async {
+      expect(MediaUploadQueueWorker.isPermanentClientStatus(426), isFalse);
+
+      final file = File('${tempDir.path}/gate.jpg')
+        ..writeAsBytesSync(List<int>.filled(512, 5));
+      final store = _InMemoryUploadStore();
+
+      final gateway = _FakeGateway(
+        onInit: (id, size) async {
+          throw ApiException('Update required', statusCode: 426);
+        },
+        onPartUrls: (_, _) async => const [],
+        onPut: (_) async => http.StreamedResponse(const Stream.empty(), 200),
+        onConfirm: (_, _) async {},
+      );
+
+      final worker = MediaUploadQueueWorker(
+        store: store,
+        gateway: gateway,
+        readConnectivity: () =>
+            const ConnectivityState(isOnline: true, isOnWifi: true),
+        readPolicy: () => MediaUploadNetworkPolicy.anyNetwork,
+        reportUserError: (_) {},
+        reportError: (_, {attachmentId, statusCode}) async {},
+      );
+      addTearDown(worker.dispose);
+
+      await store.insert(_item('att-426', file, name: 'gate.jpg'));
+      await worker.drainOnce();
+
+      expect(store.rows['att-426']!.status, MediaUploadStatus.queued);
+    },
+  );
+
+  test(
+    '410 Gone on confirm clears multipart state and retries cleanly via init',
+    () async {
+      final file = File('${tempDir.path}/expired.m4a')
+        ..writeAsBytesSync(List<int>.filled(512, 6));
+      final store = _InMemoryUploadStore();
+      var initCalls = 0;
+      var return410Once = true;
+      var confirmed = false;
+
+      final gateway = _FakeGateway(
+        onInit: (id, size) async {
+          initCalls++;
+          return {
+            'attachment_id': id,
+            'mode': 'multipart',
+            'upload_id': 'u-$initCalls',
+            'part_size': 256,
+            'total_parts': 2,
+            'uploaded_parts': const [],
+          };
+        },
+        onPartUrls: (_, parts) async => [
+          for (final p in parts)
+            {'part_number': p, 'url': 'https://s3.test/part/$p'},
+        ],
+        onPut: (req) async {
+          final p = int.parse(req.url.pathSegments.last);
+          await req.finalize().drain<void>();
+          return http.StreamedResponse(
+            const Stream.empty(),
+            200,
+            headers: {'etag': '"e$p"'},
+          );
+        },
+        onConfirm: (_, _) async {
+          if (return410Once) {
+            return410Once = false;
+            throw ApiException('Multipart upload expired.', statusCode: 410);
+          }
+          confirmed = true;
+        },
+      );
+
+      final worker = MediaUploadQueueWorker(
+        store: store,
+        gateway: gateway,
+        readConnectivity: () =>
+            const ConnectivityState(isOnline: true, isOnWifi: true),
+        readPolicy: () => MediaUploadNetworkPolicy.anyNetwork,
+        reportUserError: (_) {},
+        reportError: (_, {attachmentId, statusCode}) async {},
+      );
+      addTearDown(worker.dispose);
+
+      await store.insert(_item('att-410', file, name: 'expired.m4a'));
+      await worker.drainOnce();
+      expect(store.rows['att-410']!.status, MediaUploadStatus.queued);
+      expect(store.rows['att-410']!.s3UploadId, isEmpty);
+      expect(confirmed, isFalse);
+
+      await worker.drainOnce();
+      expect(initCalls, 2);
+      expect(confirmed, isTrue);
+      expect(store.rows, isEmpty);
+    },
+  );
+
+  test(
+    'media upload waits until parent submission leaves ps_crud before confirming',
+    () async {
+      final file = File('${tempDir.path}/gated.jpg')
+        ..writeAsBytesSync(List<int>.filled(512, 7));
+      final store = _InMemoryUploadStore();
+      store.pendingSubmissions.add('sub-1');
+      var initCalls = 0;
+
+      final gateway = _FakeGateway(
+        onInit: (id, size) async {
+          initCalls++;
+          return {
+            'attachment_id': id,
+            'mode': 'single',
+            'upload_url': 'https://s3.test/single/$id',
+          };
+        },
+        onPartUrls: (_, _) async => const [],
+        onPut: (req) async {
+          await req.finalize().drain<void>();
+          return http.StreamedResponse(const Stream.empty(), 200);
+        },
+        onConfirm: (_, _) async {},
+      );
+
+      final worker = MediaUploadQueueWorker(
+        store: store,
+        gateway: gateway,
+        readConnectivity: () =>
+            const ConnectivityState(isOnline: true, isOnWifi: true),
+        readPolicy: () => MediaUploadNetworkPolicy.anyNetwork,
+        reportUserError: (_) {},
+        reportError: (_, {attachmentId, statusCode}) async {},
+      );
+      addTearDown(worker.dispose);
+
+      await store.insert(_item('att-gated', file, name: 'gated.jpg'));
+      await worker.drainOnce();
+      expect(initCalls, 0);
+      expect(store.rows['att-gated']!.status, MediaUploadStatus.queued);
+      expect(file.existsSync(), isTrue);
+
+      store.pendingSubmissions.remove('sub-1');
+      await worker.drainOnce();
+      expect(initCalls, 1);
+      expect(store.rows, isEmpty);
+      expect(file.existsSync(), isFalse);
+    },
+  );
+
+  test(
+    'switching to Wi-Fi only mid-transfer aborts in-flight PUT and pauses for Wi-Fi',
+    () async {
+      final file = File('${tempDir.path}/inflight.jpg')
+        ..writeAsBytesSync(List<int>.filled(1024, 9));
+      final store = _InMemoryUploadStore();
+      var policy = MediaUploadNetworkPolicy.anyNetwork;
+      final putStarted = Completer<void>();
+      final putNeverCompletes = Completer<http.StreamedResponse>();
+
+      final gateway = _FakeGateway(
+        onInit: (id, size) async => {
+          'attachment_id': id,
+          'mode': 'single',
+          'upload_url': 'https://s3.test/single/$id',
+        },
+        onPartUrls: (_, _) async => const [],
+        onPut: (req) {
+          if (!putStarted.isCompleted) putStarted.complete();
+          return putNeverCompletes.future;
+        },
+        onConfirm: (_, _) async {},
+      );
+
+      final worker = MediaUploadQueueWorker(
+        store: store,
+        gateway: gateway,
+        readConnectivity: () =>
+            const ConnectivityState(isOnline: true, isOnWifi: false),
+        readPolicy: () => policy,
+        reportUserError: (_) {},
+        reportError: (_, {attachmentId, statusCode}) async {},
+      );
+      addTearDown(worker.dispose);
+
+      await store.insert(_item('att-abort', file, name: 'inflight.jpg'));
+      final drainFuture = worker.drainOnce();
+      await putStarted.future;
+
+      policy = MediaUploadNetworkPolicy.wifiOnlyAll;
+      worker.onPolicyOrConnectivityChanged();
+      putNeverCompletes.completeError(http.ClientException('aborted'));
+      await drainFuture;
+
+      expect(store.rows['att-abort']!.status, MediaUploadStatus.pausedWifi);
     },
   );
 }

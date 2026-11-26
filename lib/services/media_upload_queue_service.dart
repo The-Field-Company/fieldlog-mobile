@@ -154,13 +154,13 @@ class _StreamingSliceRequest extends http.BaseRequest {
   }
 }
 
-/// Abstract local queue store (backed by PowerSync `local_pending_uploads`).
 abstract class MediaUploadStore {
   Future<void> insert(PendingUploadItem item);
   Future<void> insertIfAbsent(PendingUploadItem item);
   Future<void> resetStuckUploading();
   Future<List<PendingUploadItem>> listRunnable();
   Future<List<String>> listAllLocalPaths();
+  Future<bool> isSubmissionPendingSync(String submissionId);
   Future<void> updateStatus(
     String attachmentId,
     String status, {
@@ -256,6 +256,20 @@ class PowerSyncMediaUploadStore implements MediaUploadStore {
         if ((row['local_path'] as String?)?.isNotEmpty == true)
           row['local_path'] as String,
     ];
+  }
+
+  @override
+  Future<bool> isSubmissionPendingSync(String submissionId) async {
+    if (submissionId.isEmpty) return false;
+    try {
+      final rows = await db.getAll(
+        "SELECT 1 FROM ps_crud WHERE json_extract(data, '\$.type') = 'fieldlog_submission' AND json_extract(data, '\$.id') = ? LIMIT 1",
+        [submissionId],
+      );
+      return rows.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
   }
 
   @override
@@ -356,7 +370,6 @@ class PowerSyncMediaUploadStore implements MediaUploadStore {
   }
 }
 
-/// Abstract remote upload gateway (default delegates to [ApiService] + [AuthService]).
 abstract class MediaUploadGateway {
   Future<void> ensureFreshToken();
   Future<void> forceRefreshToken();
@@ -440,18 +453,11 @@ class _TransientNetworkException implements Exception {
   String toString() => message;
 }
 
-/// Dedicated background upload queue decoupled from PowerSync's CRUD FIFO.
-///
-/// Processes `local_pending_uploads` smallest-first using 5 MiB resumable
-/// multipart uploads with on-demand part URL signing, persisted ETags, and
-/// optional Wi-Fi-only cellular protection.
 class MediaUploadQueueWorker {
   static const int multipartThresholdBytes = 5 * 1024 * 1024;
   static const int partUrlBatchSize = 5;
   static const Duration _binaryUploadTimeout = Duration(seconds: 300);
   static const Duration _uploadStallTimeout = Duration(seconds: 60);
-  // 4 KB/s (32 kbps) floor accommodates 50–100 kbps 2G links (~7–15 min per
-  // 5 MiB part), while _uploadStallTimeout (60s) still kills dead sockets.
   static const int _minUploadBytesPerSecond = 4 * 1024;
   static const Duration _uploadDeadlineOverhead = Duration(seconds: 120);
 
@@ -471,6 +477,7 @@ class MediaUploadQueueWorker {
   bool _reschedule = false;
   int _transientBackoffAttempt = 0;
   http.Client? _activeClient;
+  int? _activeItemFileSize;
   Future<void>? _drainFuture;
   Timer? _retryTimer;
 
@@ -597,6 +604,7 @@ class MediaUploadQueueWorker {
         statusCode < 500 &&
         statusCode != 401 &&
         statusCode != 408 &&
+        statusCode != 426 &&
         statusCode != 429;
   }
 
@@ -658,8 +666,18 @@ class MediaUploadQueueWorker {
     unawaited(drainOnce());
   }
 
-  /// Processes all runnable queued uploads until the queue is empty, offline,
-  /// paused by Wi-Fi policy, or hits a transient error.
+  void onPolicyOrConnectivityChanged() {
+    if (_stopped) return;
+    final activeSize = _activeItemFileSize;
+    if (activeSize != null && _isBlockedByWifiPolicy(activeSize)) {
+      _activeClient?.close();
+      _activeClient = null;
+    }
+    if (readConnectivity().isOnline) {
+      trigger(resetBackoff: true);
+    }
+  }
+
   Future<void> drainOnce() {
     if (_stopped) return Future<void>.value();
     if (_draining) return _drainFuture ?? Future<void>.value();
@@ -692,6 +710,10 @@ class MediaUploadQueueWorker {
     for (final item in items) {
       if (_stopped) return;
       if (!readConnectivity().isOnline) return;
+
+      if (await store.isSubmissionPendingSync(item.submissionId)) {
+        continue;
+      }
 
       if (_isBlockedByWifiPolicy(item.fileSize)) {
         if (item.status != MediaUploadStatus.pausedWifi) {
@@ -746,8 +768,6 @@ class MediaUploadQueueWorker {
     }
   }
 
-  /// Returns `true` to continue processing subsequent queue items, or `false`
-  /// to pause the queue (offline / transient error / auth failure / stopped).
   Future<bool> _processSingleItem(PendingUploadItem item) async {
     if (_stopped) return false;
     final file = File(item.localPath);
@@ -769,6 +789,10 @@ class MediaUploadQueueWorker {
     try {
       await _ensureFreshTokenOrThrow();
       final actualSize = await file.length();
+      _activeItemFileSize = actualSize;
+      if (_isBlockedByWifiPolicy(actualSize)) {
+        throw _PausedForWifiException();
+      }
       final init = await gateway.initUpload(
         attachmentId: item.attachmentId,
         sessionId: item.sessionId,
@@ -811,6 +835,11 @@ class MediaUploadQueueWorker {
       return false;
     } on SocketException {
       if (_stopped) return false;
+      if (_isBlockedByWifiPolicy(_activeItemFileSize ?? item.fileSize)) {
+        await store.updateStatus(item.attachmentId, MediaUploadStatus.pausedWifi);
+        await _emitSummary();
+        return true;
+      }
       await store.updateStatus(item.attachmentId, MediaUploadStatus.queued);
       if (readConnectivity().isOnline) {
         _scheduleRetry(++_transientBackoffAttempt);
@@ -825,6 +854,11 @@ class MediaUploadQueueWorker {
       return false;
     } on http.ClientException {
       if (_stopped) return false;
+      if (_isBlockedByWifiPolicy(_activeItemFileSize ?? item.fileSize)) {
+        await store.updateStatus(item.attachmentId, MediaUploadStatus.pausedWifi);
+        await _emitSummary();
+        return true;
+      }
       await store.updateStatus(item.attachmentId, MediaUploadStatus.queued);
       if (readConnectivity().isOnline) {
         _scheduleRetry(++_transientBackoffAttempt);
@@ -841,6 +875,22 @@ class MediaUploadQueueWorker {
       return false;
     } on ApiException catch (e) {
       if (_stopped) return false;
+      if (e.statusCode == 410) {
+        await store.saveMultipartState(
+          item.attachmentId,
+          uploadId: '',
+          partSize: 0,
+          completedPartsJson: '[]',
+        );
+        await store.updateStatus(
+          item.attachmentId,
+          MediaUploadStatus.queued,
+          retryCount: item.retryCount + 1,
+          lastError: e.message,
+        );
+        _scheduleRetry(item.retryCount + 1);
+        return false;
+      }
       if (isPermanentClientStatus(e.statusCode)) {
         await store.updateStatus(
           item.attachmentId,
@@ -860,13 +910,11 @@ class MediaUploadQueueWorker {
       }
 
       if (e.statusCode == 401) {
-        // Handle clock skew where local expiry check skipped refresh.
         try {
           await gateway.forceRefreshToken();
         } catch (_) {}
       }
 
-      // 401 / 408 / 429 / 5xx — transient, preserve state & retry later.
       await store.updateStatus(
         item.attachmentId,
         MediaUploadStatus.queued,
@@ -886,6 +934,8 @@ class MediaUploadQueueWorker {
       await reportError(e, attachmentId: item.attachmentId);
       _scheduleRetry(item.retryCount + 1);
       return false;
+    } finally {
+      _activeItemFileSize = null;
     }
   }
 
@@ -919,8 +969,6 @@ class MediaUploadQueueWorker {
     final totalParts = (init['total_parts'] as num).toInt();
     final serverPartsRaw = init['uploaded_parts'] as List<dynamic>? ?? const [];
 
-    // Trust S3 list_parts as authoritative so stale local ETags can never break
-    // CompleteMultipartUpload with InvalidPart.
     final completed = <int, String>{};
     for (final entry in serverPartsRaw) {
       if (entry is Map) {
@@ -985,7 +1033,6 @@ class MediaUploadQueueWorker {
           end: end,
         );
 
-        // If presigned URL expired mid-transfer (>1h on 2G), fetch a fresh URL once.
         if (result.statusCode == 403) {
           await _ensureFreshTokenOrThrow();
           final refreshed = await gateway.getPartUrls(
@@ -1042,12 +1089,9 @@ class MediaUploadQueueWorker {
   }) {
     if (statusCode >= 200 && statusCode < 300) return;
     if (statusCode == 403) {
-      // Presigned S3 URL expired or clock skew — retry via fresh /init/ or /part-url/.
       throw _TransientNetworkException('Presigned URL expired for $label (403)');
     }
     if (isMultipartPart && statusCode == 404) {
-      // S3/R2/MinIO returns 404 NoSuchUpload when a multipart upload expires after 7d.
-      // Retry via /init/ so the server transparently creates a new upload_id.
       throw _TransientNetworkException('Multipart upload expired for $label (404)');
     }
     if (isPermanentClientStatus(statusCode)) {
@@ -1103,8 +1147,6 @@ class MediaUploadQueueWorker {
   }
 }
 
-/// App-wide singleton facade wiring [MediaUploadQueueWorker] to PowerSync,
-/// [ConnectivityService], and [PreferencesService].
 class MediaUploadQueueService {
   static MediaUploadQueueWorker? _worker;
   static StreamSubscription<ConnectivityState>? _connectivitySub;
@@ -1144,7 +1186,7 @@ class MediaUploadQueueService {
     }
 
     _connectivitySub = ConnectivityService.stateStream.listen((state) {
-      if (state.isOnline) _worker?.trigger(resetBackoff: true);
+      _worker?.onPolicyOrConnectivityChanged();
     });
     PreferencesService.mediaPolicyNotifier.addListener(_onPolicyChanged);
 
@@ -1152,19 +1194,11 @@ class MediaUploadQueueService {
   }
 
   static void _onPolicyChanged() {
-    _worker?.trigger(resetBackoff: true);
+    _worker?.onPolicyOrConnectivityChanged();
   }
 
   static const _legacyNamespaceUrl = '6ba7b811-9dad-11d1-80b4-00c04fd430c8';
 
-  /// Extracts local `file_path` entries from [payload], mutates [payload] in
-  /// place to lightweight `{attachment_id, name, type, size}` references, and
-  /// returns the corresponding [PendingUploadItem] rows to persist.
-  ///
-  /// When [deterministicId] is true (used when upgrading pre-existing unsynced
-  /// PowerSync rows), `attachment_id` is derived deterministically from
-  /// `(submissionId, fieldKey)` so retries never create duplicate queue entries
-  /// pointing to the same local file.
   static Future<List<PendingUploadItem>> extractSubmissionMedia(
     Map<String, dynamic> payload, {
     required String submissionId,
@@ -1303,8 +1337,6 @@ class MediaUploadQueueService {
     );
   }
 
-  /// Deletes cached local media files referenced by `local_pending_uploads`.
-  /// Must be called after [stop] and before `db.disconnectAndClear()` on logout.
   static Future<void> cleanupLocalFilesForLogout(PowerSyncDatabase db) async {
     try {
       final store = PowerSyncMediaUploadStore(db);
