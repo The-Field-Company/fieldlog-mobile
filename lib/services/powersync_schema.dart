@@ -34,4 +34,23 @@ const schema = Schema([
     Column.integer('is_public'),
     Column.text('created_at'),
   ]),
+  // Local-only resumable media upload queue (decoupled from PowerSync CRUD).
+  // `id` stores the client-generated attachment_id UUID. Cleared on logout via
+  // disconnectAndClear().
+  Table.localOnly('local_pending_uploads', [
+    Column.text('submission_id'),
+    Column.integer('session_id'),
+    Column.text('field_key'),
+    Column.text('local_path'),
+    Column.text('original_name'),
+    Column.text('content_type'),
+    Column.integer('file_size'),
+    Column.text('s3_upload_id'),
+    Column.integer('part_size'),
+    Column.text('completed_parts_json'),
+    Column.text('status'),
+    Column.integer('retry_count'),
+    Column.text('last_error'),
+    Column.text('created_at'),
+  ]),
 ]);

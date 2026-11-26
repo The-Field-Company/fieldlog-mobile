@@ -8,6 +8,7 @@ import '../models/session.dart';
 import '../theme/app_colors.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
+import '../services/media_upload_queue_service.dart';
 import '../services/powersync_service.dart';
 import '../services/preferences_service.dart';
 import '../services/location_service.dart';
@@ -184,19 +185,40 @@ class _FormScreenState extends State<FormScreen> {
       throw Exception('PowerSync not initialized');
     }
 
-    final id = const Uuid().v4();
+    final submissionId = const Uuid().v4();
     final username = AuthService.getUsername() ?? 'Anonymous';
-
-    await db.execute(
-      'INSERT INTO fieldlog_submission (id, session_id, submitted_by, data, submitted_at) VALUES (?, ?, ?, ?, ?)',
-      [
-        id,
-        _session.id,
-        username,
-        jsonEncode(data),
-        DateTime.now().toUtc().toIso8601String(),
-      ],
+    final payload = Map<String, dynamic>.from(data);
+    final pendingMedia = await MediaUploadQueueService.extractSubmissionMedia(
+      payload,
+      submissionId: submissionId,
+      sessionId: _session.id,
+      deterministicId: false,
+      throwOnUnsupported: true,
     );
+
+    final submittedAt = DateTime.now().toUtc().toIso8601String();
+    await db.writeTransaction((tx) async {
+      for (final media in pendingMedia) {
+        await tx.execute(
+          PowerSyncMediaUploadStore.insertSql,
+          PowerSyncMediaUploadStore.insertArgs(media),
+        );
+      }
+      await tx.execute(
+        'INSERT INTO fieldlog_submission (id, session_id, submitted_by, data, submitted_at) VALUES (?, ?, ?, ?, ?)',
+        [
+          submissionId,
+          _session.id,
+          username,
+          jsonEncode(payload),
+          submittedAt,
+        ],
+      );
+    });
+
+    if (pendingMedia.isNotEmpty) {
+      await MediaUploadQueueService.notifyEnqueued(triggerUpload: true);
+    }
   }
 
   Future<void> _submitFormData(Map<String, dynamic> data) async {
