@@ -24,15 +24,50 @@ enum MediaUploadNetworkPolicy {
 class PreferencesService {
   static const _serverUrlKey = 'server_url';
   static const _defaultServerUrl = String.fromEnvironment('SERVER_URL');
+  static const _tusUrlKey = 'tus_url';
+  static const _defaultTusUrl = String.fromEnvironment('TUS_URL');
   static const _powerSyncUrlKey = 'powersync_url';
   static const _defaultPowerSyncUrl = String.fromEnvironment('POWERSYNC_URL');
   static const _cachedSessionKey = 'cached_session';
   static const _mediaPolicyKey = 'media_upload_network_policy';
+  static const _lowCoverageModeKey = 'low_coverage_mode';
 
   static final ValueNotifier<MediaUploadNetworkPolicy> mediaPolicyNotifier =
       ValueNotifier<MediaUploadNetworkPolicy>(
     MediaUploadNetworkPolicy.anyNetwork,
   );
+
+  static final ValueNotifier<bool> lowCoverageModeNotifier =
+      ValueNotifier<bool>(false);
+
+  static Future<bool> getLowCoverageMode() async {
+    final prefs = await SharedPreferences.getInstance();
+    final enabled = prefs.getBool(_lowCoverageModeKey) ?? false;
+    lowCoverageModeNotifier.value = enabled;
+    return enabled;
+  }
+
+  static Future<void> setLowCoverageMode(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_lowCoverageModeKey, enabled);
+    lowCoverageModeNotifier.value = enabled;
+  }
+
+  static Future<String> getTusUrl() async {
+    final prefs = await SharedPreferences.getInstance();
+    final override = prefs.getString(_tusUrlKey);
+    if (override != null && override.isNotEmpty) return override;
+    if (_defaultTusUrl.isNotEmpty) return _defaultTusUrl;
+    final serverUrl = await getServerUrl();
+    if (serverUrl.isEmpty) return '';
+    final normalized = serverUrl.replaceAll(RegExp(r'/+$'), '');
+    return '$normalized/tus/';
+  }
+
+  static Future<void> setTusUrl(String url) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_tusUrlKey, url);
+  }
 
   static Future<MediaUploadNetworkPolicy> getMediaUploadPolicy() async {
     final prefs = await SharedPreferences.getInstance();

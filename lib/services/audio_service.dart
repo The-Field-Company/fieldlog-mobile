@@ -57,7 +57,7 @@ abstract class AudioBackend {
   Future<bool> hasMicPermission();
   Future<bool> openAppSettings();
   Future<PickedAudioFile?> pickAudioFile({required String destinationBasePath});
-  Future<void> startRecording({required String path});
+  Future<void> startRecording({required String path, bool lowCoverage = false});
   Future<void> pauseRecording();
   Future<void> resumeRecording();
   Future<RecordedAudio?> stopRecording();
@@ -181,15 +181,13 @@ class _PluginAudioBackend implements AudioBackend {
   }
 
   @override
-  Future<void> startRecording({required String path}) async {
+  Future<void> startRecording({
+    required String path,
+    bool lowCoverage = false,
+  }) async {
     await stopPlayback();
     await _audioRecorder.start(
-      const RecordConfig(
-        encoder: AudioEncoder.aacLc,
-        bitRate: 128000,
-        sampleRate: 44100,
-        numChannels: 1,
-      ),
+      AudioService.recordingConfig(lowCoverage: lowCoverage),
       path: path,
     );
     _recordingPath = path;
@@ -416,9 +414,28 @@ class AudioService {
     required String destinationBasePath,
   }) => _backend.pickAudioFile(destinationBasePath: destinationBasePath);
 
+  @visibleForTesting
+  static RecordConfig recordingConfig({required bool lowCoverage}) {
+    if (lowCoverage) {
+      return const RecordConfig(
+        encoder: AudioEncoder.aacLc,
+        bitRate: 48000,
+        sampleRate: 24000,
+        numChannels: 1,
+      );
+    }
+    return const RecordConfig(
+      encoder: AudioEncoder.aacLc,
+      bitRate: 128000,
+      sampleRate: 44100,
+      numChannels: 1,
+    );
+  }
+
   static Future<void> startRecording({
     required String path,
     String ownerId = _defaultOwner,
+    bool lowCoverage = false,
   }) async {
     if (_activeRecordingOwner != null && _activeRecordingOwner != ownerId) {
       throw StateError('Another audio field is currently recording.');
@@ -434,7 +451,7 @@ class AudioService {
     }
     _activeRecordingOwner = ownerId;
     try {
-      await _backend.startRecording(path: path);
+      await _backend.startRecording(path: path, lowCoverage: lowCoverage);
     } catch (_) {
       if (_activeRecordingOwner == ownerId) {
         _activeRecordingOwner = null;

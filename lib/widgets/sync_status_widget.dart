@@ -198,83 +198,112 @@ class _MediaSyncSheet extends StatelessWidget {
             return ValueListenableBuilder<MediaUploadNetworkPolicy>(
               valueListenable: PreferencesService.mediaPolicyNotifier,
               builder: (context, policy, _) {
-                return Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Media uploads',
-                      style: AppTypography.textStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      _statusSubtitle(summary),
-                      style: AppTypography.textStyle(
-                        fontSize: 13,
-                        color: summary.failedCount > 0
-                            ? AppColors.error
-                            : AppColors.textSecondary,
-                      ),
-                    ),
-                    if (summary.isUploading && summary.activeProgress != null) ...[
-                      const SizedBox(height: 8),
-                      LinearProgressIndicator(
-                        value: summary.activeProgress,
-                        color: AppColors.accent,
-                        backgroundColor: AppColors.dividerColor,
-                      ),
-                    ],
-                    if (summary.failedCount > 0) ...[
-                      const SizedBox(height: 8),
-                      TextButton.icon(
-                        onPressed: () => MediaUploadQueueService.retryFailed(),
-                        icon: const Icon(Icons.refresh, size: 16),
-                        label: const Text('Retry failed'),
-                        style: TextButton.styleFrom(
-                          foregroundColor: AppColors.accent,
-                          padding: EdgeInsets.zero,
+                return ValueListenableBuilder<bool>(
+                  valueListenable: PreferencesService.lowCoverageModeNotifier,
+                  builder: (context, lowCoverage, _) {
+                    return Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Media uploads',
+                          style: AppTypography.textStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textPrimary,
+                          ),
                         ),
-                      ),
-                    ],
-                    const SizedBox(height: 20),
-                    Text(
-                      'Upload media on',
-                      style: AppTypography.textStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                    RadioGroup<MediaUploadNetworkPolicy>(
-                      groupValue: policy,
-                      onChanged: (next) {
-                        if (next != null) {
-                          PreferencesService.setMediaUploadPolicy(next);
-                        }
-                      },
-                      child: const Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          _PolicyTile(
-                            value: MediaUploadNetworkPolicy.anyNetwork,
-                            title: 'Any network',
+                        const SizedBox(height: 4),
+                        Text(
+                          _statusSubtitle(summary),
+                          style: AppTypography.textStyle(
+                            fontSize: 13,
+                            color: summary.failedCount > 0
+                                ? AppColors.error
+                                : AppColors.textSecondary,
                           ),
-                          _PolicyTile(
-                            value: MediaUploadNetworkPolicy.wifiOnlyLarge,
-                            title: 'Wi-Fi only for files over 5 MB',
-                          ),
-                          _PolicyTile(
-                            value: MediaUploadNetworkPolicy.wifiOnlyAll,
-                            title: 'Wi-Fi only',
+                        ),
+                        if (summary.isUploading && summary.activeProgress != null) ...[
+                          const SizedBox(height: 8),
+                          LinearProgressIndicator(
+                            value: summary.activeProgress,
+                            color: AppColors.accent,
+                            backgroundColor: AppColors.dividerColor,
                           ),
                         ],
-                      ),
-                    ),
-                  ],
+                        if (summary.failedCount > 0) ...[
+                          const SizedBox(height: 8),
+                          TextButton.icon(
+                            onPressed: () => MediaUploadQueueService.retryFailed(),
+                            icon: const Icon(Icons.refresh, size: 16),
+                            label: const Text('Retry failed'),
+                            style: TextButton.styleFrom(
+                              foregroundColor: AppColors.accent,
+                              padding: EdgeInsets.zero,
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 16),
+                        SwitchListTile(
+                          value: lowCoverage,
+                          onChanged: (enabled) =>
+                              PreferencesService.setLowCoverageMode(enabled),
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          activeThumbColor: AppColors.accent,
+                          title: Text(
+                            'Low Coverage Mode',
+                            style: AppTypography.textStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                          subtitle: Text(
+                            'Smaller uploads for weak signal',
+                            style: AppTypography.textStyle(
+                              fontSize: 12,
+                              color: AppColors.textTertiary,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          'Upload media on',
+                          style: AppTypography.textStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                        RadioGroup<MediaUploadNetworkPolicy>(
+                          groupValue: policy,
+                          onChanged: (next) {
+                            if (next != null) {
+                              PreferencesService.setMediaUploadPolicy(next);
+                            }
+                          },
+                          child: const Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              _PolicyTile(
+                                value: MediaUploadNetworkPolicy.anyNetwork,
+                                title: 'Any network',
+                              ),
+                              _PolicyTile(
+                                value: MediaUploadNetworkPolicy.wifiOnlyLarge,
+                                title: 'Wi-Fi only for files over 5 MB',
+                              ),
+                              _PolicyTile(
+                                value: MediaUploadNetworkPolicy.wifiOnlyAll,
+                                title: 'Wi-Fi only',
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    );
+                  },
                 );
               },
             );

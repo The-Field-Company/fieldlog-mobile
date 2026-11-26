@@ -13,6 +13,7 @@ class _FakeAudioBackend implements AudioBackend {
   bool micPermission = true;
   bool playbackStarted = false;
   bool recordingPaused = false;
+  bool? lastRecordingLowCoverage;
   String? activeRecordingPath;
   final List<String> startedPlaybackPaths = [];
   VoidCallback? onPlaybackCompleteCallback;
@@ -39,8 +40,12 @@ class _FakeAudioBackend implements AudioBackend {
   }
 
   @override
-  Future<void> startRecording({required String path}) async {
+  Future<void> startRecording({
+    required String path,
+    bool lowCoverage = false,
+  }) async {
     activeRecordingPath = path;
+    lastRecordingLowCoverage = lowCoverage;
     recordingPaused = false;
   }
 
