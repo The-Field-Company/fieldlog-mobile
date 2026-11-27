@@ -1022,9 +1022,30 @@ class MediaUploadQueueWorker {
       partSize: partSize,
       completedPartsJson: _encodeParts(completed),
     );
+
+    int partLength(int partNumber) =>
+        max(0, min(partSize, fileSize - (partNumber - 1) * partSize));
+    double progressFor(int bytesDone) =>
+        fileSize > 0 ? min(0.95, (bytesDone / fileSize) * 0.95) : 0;
+
+    var doneBytes = completed.keys.fold<int>(0, (sum, n) => sum + partLength(n));
+    var lastReportedProgress = progressFor(doneBytes);
+    void reportPartBytes(int sentInPart) {
+      final progress = progressFor(doneBytes + sentInPart);
+      if (progress - lastReportedProgress >= 0.01) {
+        lastReportedProgress = progress;
+        unawaited(
+          _emitSummary(
+            activeFileName: item.originalName,
+            activeProgress: progress,
+          ),
+        );
+      }
+    }
+
     await _emitSummary(
       activeFileName: item.originalName,
-      activeProgress: totalParts > 0 ? completed.length / totalParts : 0,
+      activeProgress: lastReportedProgress,
     );
 
     final remaining = <int>[
@@ -1067,6 +1088,7 @@ class MediaUploadQueueWorker {
           file: file,
           start: start,
           end: end,
+          onBytesSent: reportPartBytes,
         );
 
         if (result.statusCode == 403) {
@@ -1082,6 +1104,7 @@ class MediaUploadQueueWorker {
               file: file,
               start: start,
               end: end,
+              onBytesSent: reportPartBytes,
             );
           }
         }
@@ -1103,9 +1126,11 @@ class MediaUploadQueueWorker {
           partSize: partSize,
           completedPartsJson: _encodeParts(completed),
         );
+        doneBytes += end - start;
+        lastReportedProgress = progressFor(doneBytes);
         await _emitSummary(
           activeFileName: item.originalName,
-          activeProgress: completed.length / totalParts,
+          activeProgress: lastReportedProgress,
         );
       }
     }

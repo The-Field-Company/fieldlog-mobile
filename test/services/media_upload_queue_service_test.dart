@@ -356,6 +356,73 @@ void main() {
   );
 
   test(
+    'reports byte-level progress within multipart parts',
+    () async {
+      const partSize = 512 * 1024;
+      final file = File('${tempDir.path}/clip.wav')
+        ..writeAsBytesSync(List<int>.filled(2 * partSize, 7));
+
+      final store = _InMemoryUploadStore();
+      final gateway = _FakeGateway(
+        onInit: (id, size) async => {
+          'attachment_id': id,
+          'mode': 'multipart',
+          'upload_id': 'u-progress',
+          'part_size': partSize,
+          'total_parts': 2,
+          'uploaded_parts': const [],
+        },
+        onPartUrls: (id, parts) async => [
+          for (final p in parts)
+            {'part_number': p, 'url': 'https://s3.test/part/$p'},
+        ],
+        onPut: (req) async {
+          final partNum = int.parse(req.url.pathSegments.last);
+          await req.finalize().drain<void>();
+          return http.StreamedResponse(
+            const Stream.empty(),
+            200,
+            headers: {'etag': '"etag-$partNum"'},
+          );
+        },
+        onConfirm: (id, parts) async {},
+      );
+
+      final worker = MediaUploadQueueWorker(
+        store: store,
+        gateway: gateway,
+        readConnectivity: () =>
+            const ConnectivityState(isOnline: true, isOnWifi: true),
+        readPolicy: () => MediaUploadNetworkPolicy.anyNetwork,
+        reportUserError: (_) {},
+        reportError: (_, {attachmentId, statusCode}) async {},
+      );
+      addTearDown(worker.dispose);
+
+      final progress = <double>[];
+      final sub = worker.summaryStream.listen((s) {
+        final p = s.activeProgress;
+        if (p != null) progress.add(p);
+      });
+      addTearDown(sub.cancel);
+
+      await store.insert(
+        _item('att-progress', file, name: 'clip.wav', contentType: 'audio/wav'),
+      );
+      await worker.drainOnce();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(store.rows, isEmpty);
+      expect(progress.any((p) => p > 0 && p < 0.475), isTrue);
+      expect(progress.any((p) => p > 0.475 && p < 0.95), isTrue);
+      expect(progress.every((p) => p <= 0.95), isTrue);
+      for (var i = 1; i < progress.length; i++) {
+        expect(progress[i], greaterThanOrEqualTo(progress[i - 1]));
+      }
+    },
+  );
+
+  test(
     'refreshes expired part URL on 403 mid-upload without restarting',
     () async {
       const partSize = 64 * 1024;
