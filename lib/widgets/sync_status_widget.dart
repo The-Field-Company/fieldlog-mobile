@@ -203,14 +203,14 @@ class _MediaSyncSheet extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Sync & Media Uploads',
+                      'Media uploads',
                       style: AppTypography.textStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w600,
                         color: AppColors.textPrimary,
                       ),
                     ),
-                    const SizedBox(height: 6),
+                    const SizedBox(height: 4),
                     Text(
                       _statusSubtitle(summary),
                       style: AppTypography.textStyle(
@@ -233,31 +233,22 @@ class _MediaSyncSheet extends StatelessWidget {
                       TextButton.icon(
                         onPressed: () => MediaUploadQueueService.retryFailed(),
                         icon: const Icon(Icons.refresh, size: 16),
-                        label: const Text('Retry failed media uploads'),
+                        label: const Text('Retry failed'),
                         style: TextButton.styleFrom(
                           foregroundColor: AppColors.accent,
                           padding: EdgeInsets.zero,
                         ),
                       ),
                     ],
-                    const Divider(height: 24),
+                    const SizedBox(height: 20),
                     Text(
-                      'Media upload network',
+                      'Upload media on',
                       style: AppTypography.textStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
                         color: AppColors.textSecondary,
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Form observations, GPS, and tallies always sync immediately over cellular.',
-                      style: AppTypography.textStyle(
-                        fontSize: 12,
-                        color: AppColors.textTertiary,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
                     RadioGroup<MediaUploadNetworkPolicy>(
                       groupValue: policy,
                       onChanged: (next) {
@@ -270,18 +261,15 @@ class _MediaSyncSheet extends StatelessWidget {
                         children: [
                           _PolicyTile(
                             value: MediaUploadNetworkPolicy.anyNetwork,
-                            title: 'Wi-Fi & cellular',
-                            subtitle: 'Upload all media on any connection',
+                            title: 'Any network',
                           ),
                           _PolicyTile(
                             value: MediaUploadNetworkPolicy.wifiOnlyLarge,
-                            title: 'Wi-Fi only for files > 5 MB',
-                            subtitle: 'Photos sync on cellular; large audio/video wait for Wi-Fi',
+                            title: 'Wi-Fi only for files over 5 MB',
                           ),
                           _PolicyTile(
                             value: MediaUploadNetworkPolicy.wifiOnlyAll,
-                            title: 'Wi-Fi only for all media',
-                            subtitle: 'Pause all media uploads on cellular',
+                            title: 'Wi-Fi only',
                           ),
                         ],
                       ),
@@ -296,38 +284,41 @@ class _MediaSyncSheet extends StatelessWidget {
     );
   }
 
+  static String _files(int count) => count == 1 ? '1 file' : '$count files';
+
   static String _statusSubtitle(PendingMediaSummary summary) {
     final failSuffix = summary.failedCount > 0
         ? ' · ${summary.failedCount} failed'
         : '';
     if (summary.isUploading && summary.activeFileName != null) {
       final pct = summary.activeProgress != null
-          ? ' (${(summary.activeProgress! * 100).round()}%)'
+          ? ' · ${(summary.activeProgress! * 100).round()}%'
           : '';
-      return 'Uploading ${summary.activeFileName}$pct · ${summary.pendingTotal} remaining$failSuffix';
+      final left = summary.pendingTotal > 1
+          ? ' · ${summary.pendingTotal - 1} more'
+          : '';
+      return 'Uploading ${summary.activeFileName}$pct$left$failSuffix';
     }
     if (summary.isPausedForWifi) {
-      return '${summary.pausedWifiCount} media file(s) paused — waiting for Wi-Fi$failSuffix';
+      return '${_files(summary.pausedWifiCount)} waiting for Wi-Fi$failSuffix';
     }
     if (summary.failedCount > 0) {
-      return '${summary.failedCount} media file(s) failed — other observations are unaffected';
+      return '${_files(summary.failedCount)} failed';
     }
     if (summary.pendingTotal > 0) {
-      return '${summary.pendingTotal} media file(s) queued for background upload';
+      return '${_files(summary.pendingTotal)} queued';
     }
-    return 'All media uploads synced';
+    return 'All media uploaded';
   }
 }
 
 class _PolicyTile extends StatelessWidget {
   final MediaUploadNetworkPolicy value;
   final String title;
-  final String subtitle;
 
   const _PolicyTile({
     required this.value,
     required this.title,
-    required this.subtitle,
   });
 
   @override
@@ -343,13 +334,6 @@ class _PolicyTile extends StatelessWidget {
           fontSize: 14,
           fontWeight: FontWeight.w500,
           color: AppColors.textPrimary,
-        ),
-      ),
-      subtitle: Text(
-        subtitle,
-        style: AppTypography.textStyle(
-          fontSize: 12,
-          color: AppColors.textTertiary,
         ),
       ),
     );
