@@ -583,6 +583,17 @@ class AudioService {
     await _backend.stopPlayback();
   }
 
+  static Future<void> stopActivePlayback() async {
+    if (_activePlaybackOwner == null) return;
+    final interrupted = _onPlaybackInterrupted;
+    _playbackSeq++;
+    _activePlaybackOwner = null;
+    _onPlaybackInterrupted = null;
+    _backend.setOnPlaybackComplete(null);
+    interrupted?.call();
+    await _backend.stopPlayback();
+  }
+
   static Future<PlaybackStatus> getPlaybackStatus({
     String ownerId = _defaultOwner,
   }) async {

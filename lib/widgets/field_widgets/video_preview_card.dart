@@ -59,8 +59,9 @@ class _VideoPreviewCardState extends State<VideoPreviewCard> {
     });
   }
 
-  void _openPlayer(BuildContext context) {
-    AudioService.stopPlayback();
+  Future<void> _openPlayer(BuildContext context) async {
+    await AudioService.stopActivePlayback();
+    if (!context.mounted) return;
     showDialog<void>(
       context: context,
       builder: (_) => _VideoPlayerDialog(

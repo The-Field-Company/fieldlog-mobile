@@ -88,7 +88,7 @@ import UIKit
     guard FileManager.default.fileExists(atPath: path) else { return nil }
     let asset = AVURLAsset(url: URL(fileURLWithPath: path))
     let seconds = CMTimeGetSeconds(asset.duration)
-    let durationMs: Int? = (seconds.isFinite && seconds > 0) ? Int(seconds * 1000.0) : nil
+    let durationMs: Int? = (seconds.isFinite && seconds > 0 && seconds < Double(Int.max) / 1000.0) ? Int(seconds * 1000.0) : nil
 
     let generator = AVAssetImageGenerator(asset: asset)
     generator.appliesPreferredTrackTransform = true
