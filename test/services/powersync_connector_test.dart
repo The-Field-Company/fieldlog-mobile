@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
-import 'package:fieldlog_mobile/services/powersync_connector.dart';
+import 'package:fieldlog_mobile/services/media_upload_queue_service.dart';
 
 class _FakeStreamingClient extends http.BaseClient {
   final Future<http.StreamedResponse> Function(http.BaseRequest request)
@@ -26,7 +26,7 @@ void main() {
   late Directory tempDir;
 
   setUp(() {
-    tempDir = Directory.systemTemp.createTempSync('powersync_connector_test_');
+    tempDir = Directory.systemTemp.createTempSync('upload_streaming_test_');
   });
 
   tearDown(() {
@@ -35,23 +35,22 @@ void main() {
     }
   });
 
-  group('FieldLogConnector upload deadlines', () {
-    test('totalUploadDeadlineForBytes scales above 300s for large files', () {
+  group('MediaUploadQueueWorker streaming PUT deadlines', () {
+    test('totalUploadDeadlineForBytes accommodates 2G speeds for 5 MiB parts', () {
       expect(
-        FieldLogConnector.totalUploadDeadlineForBytes(2 * 1024 * 1024),
+        MediaUploadQueueWorker.totalUploadDeadlineForBytes(256 * 1024),
         const Duration(seconds: 300),
       );
-      final fiftyMbDeadline = FieldLogConnector.totalUploadDeadlineForBytes(
-        50 * 1024 * 1024,
+      final fiveMbDeadline = MediaUploadQueueWorker.totalUploadDeadlineForBytes(
+        5 * 1024 * 1024,
       );
-      // 50 MiB at 1 Mbit/s takes ~419s; deadline must comfortably exceed that.
-      expect(fiftyMbDeadline.inSeconds, greaterThan(500));
+      // 5 MiB on 50–100 kbps 2G takes ~7–15 minutes; deadline must exceed 1000s.
+      expect(fiveMbDeadline.inSeconds, greaterThan(1000));
     });
 
     test(
-      'allows an actively progressing upload to exceed stallTimeout',
+      'allows an actively progressing upload to exceed stallTimeout and captures ETag',
       () async {
-        // Create a file large enough to span multiple 64 KiB openRead chunks.
         final file = File('${tempDir.path}/audio.m4a')
           ..writeAsBytesSync(List<int>.filled(256 * 1024, 7));
         final client = _FakeStreamingClient((request) async {
@@ -59,25 +58,29 @@ void main() {
           var received = 0;
           await for (final chunk in stream) {
             received += chunk.length;
-            // Pace chunk consumption slower than stallTimeout in total,
-            // while staying under stallTimeout per chunk.
             await Future<void>.delayed(const Duration(milliseconds: 35));
           }
           expect(received, file.lengthSync());
-          return http.StreamedResponse(const Stream.empty(), 200);
+          return http.StreamedResponse(
+            const Stream.empty(),
+            200,
+            headers: {'etag': '"abc123"'},
+          );
         });
 
-        final statusCode = await FieldLogConnector.sendStreamingPutAttempt(
+        final result = await MediaUploadQueueWorker.sendStreamingPutAttempt(
           client: client,
           url: Uri.parse('https://example.test/upload'),
           file: file,
-          contentLength: file.lengthSync(),
+          start: 0,
+          end: file.lengthSync(),
           contentType: 'audio/mp4',
           stallTimeout: const Duration(milliseconds: 100),
           totalDeadline: const Duration(seconds: 5),
         );
 
-        expect(statusCode, 200);
+        expect(result.statusCode, 200);
+        expect(result.etag, '"abc123"');
         expect(client.closed, isTrue);
       },
     );
@@ -96,11 +99,12 @@ void main() {
         });
 
         await expectLater(
-          FieldLogConnector.sendStreamingPutAttempt(
+          MediaUploadQueueWorker.sendStreamingPutAttempt(
             client: client,
             url: Uri.parse('https://example.test/upload'),
             file: file,
-            contentLength: file.lengthSync(),
+            start: 0,
+            end: file.lengthSync(),
             contentType: 'audio/mp4',
             stallTimeout: const Duration(milliseconds: 80),
             totalDeadline: const Duration(seconds: 5),
@@ -125,11 +129,12 @@ void main() {
         });
 
         await expectLater(
-          FieldLogConnector.sendStreamingPutAttempt(
+          MediaUploadQueueWorker.sendStreamingPutAttempt(
             client: client,
             url: Uri.parse('https://example.test/upload'),
             file: file,
-            contentLength: file.lengthSync(),
+            start: 0,
+            end: file.lengthSync(),
             contentType: 'audio/mp4',
             stallTimeout: const Duration(milliseconds: 200),
             totalDeadline: const Duration(milliseconds: 120),

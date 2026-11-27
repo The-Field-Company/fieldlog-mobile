@@ -6,6 +6,7 @@ import '../models/session.dart';
 import 'powersync_schema.dart';
 import 'powersync_connector.dart';
 import 'connectivity_service.dart';
+import 'media_upload_queue_service.dart';
 
 /// PowerSync database service mirroring ui/src/services/powersync/index.js
 class PowerSyncService {
@@ -23,6 +24,7 @@ class PowerSyncService {
       path: dbPath,
     );
     await db.initialize();
+    await MediaUploadQueueService.start(db);
     await db.connect(connector: FieldLogConnector());
 
     _db = db;
@@ -76,7 +78,9 @@ class PowerSyncService {
   static Future<void> disconnectPowerSync() async {
     await _connectivitySubscription?.cancel();
     _connectivitySubscription = null;
+    await MediaUploadQueueService.stop();
     if (_db != null) {
+      await MediaUploadQueueService.cleanupLocalFilesForLogout(_db!);
       // disconnectAndClear clears all managed tables, local-only tables, and
       // the CRUD upload queue, so no stale data or pending ops carry over to
       // the next user session on the same device.

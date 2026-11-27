@@ -144,19 +144,38 @@ class ApiService {
     }
   }
 
-  static Future<Map<String, dynamic>> presignUpload({
+  static String _errorDetail(http.Response response, String fallback) {
+    try {
+      final parsed = jsonDecode(response.body);
+      if (parsed is Map && parsed['detail'] is String) {
+        return parsed['detail'] as String;
+      }
+    } catch (_) {}
+    return fallback;
+  }
+
+  static Future<Map<String, dynamic>> initUpload({
+    required String attachmentId,
+    required int sessionId,
     required String fileName,
     required String contentType,
-    String? sessionId,
+    required int fileSize,
+    String? fieldKey,
   }) async {
     final serverUrl = await PreferencesService.getServerUrl();
-    final url = Uri.parse('$serverUrl/api/uploads/presign/');
+    final url = Uri.parse('$serverUrl/api/uploads/init/');
 
     final body = <String, dynamic>{
+      'purpose': 'submission',
+      'attachment_id': attachmentId,
+      'session_id': sessionId,
       'filename': fileName,
       'content_type': contentType,
+      'size': fileSize,
     };
-    if (sessionId != null) body['session_id'] = sessionId;
+    if (fieldKey != null && fieldKey.isNotEmpty) {
+      body['field_key'] = fieldKey;
+    }
 
     final http.Response response;
     final client = SentryHttpClient();
@@ -171,37 +190,89 @@ class ApiService {
             body: jsonEncode(body),
           )
           .timeout(_httpTimeout);
-    } on TimeoutException {
-      throw ApiException('Upload presign timed out. Check your connection.');
     } finally {
       client.close();
     }
 
     if (response.statusCode == 401 || response.statusCode == 403) {
-      throw ApiException('Upload not authorized.', statusCode: response.statusCode);
+      throw ApiException(
+        _errorDetail(response, 'Upload not authorized.'),
+        statusCode: response.statusCode,
+      );
     }
     if (response.statusCode >= 500) {
       throw ApiException(
-        'Server error during upload presign.',
+        'Server error during upload init.',
         statusCode: response.statusCode,
       );
     }
     if (response.statusCode != 200) {
-      throw ApiException('Upload presign failed.', statusCode: response.statusCode);
+      throw ApiException(
+        _errorDetail(response, 'Upload initialization failed.'),
+        statusCode: response.statusCode,
+      );
     }
 
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
+  static Future<List<Map<String, dynamic>>> getUploadPartUrls({
+    required String attachmentId,
+    required List<int> partNumbers,
+  }) async {
+    final serverUrl = await PreferencesService.getServerUrl();
+    final url = Uri.parse('$serverUrl/api/uploads/$attachmentId/part-url/');
+
+    final http.Response response;
+    final client = SentryHttpClient();
+    try {
+      response = await client
+          .post(
+            url,
+            headers: {
+              'Content-Type': 'application/json',
+              ...await _authHeaders(),
+            },
+            body: jsonEncode({'part_numbers': partNumbers}),
+          )
+          .timeout(_httpTimeout);
+    } finally {
+      client.close();
+    }
+
+    if (response.statusCode == 401 || response.statusCode == 403) {
+      throw ApiException(
+        _errorDetail(response, 'Upload not authorized.'),
+        statusCode: response.statusCode,
+      );
+    }
+    if (response.statusCode >= 500) {
+      throw ApiException(
+        'Server error fetching part URLs.',
+        statusCode: response.statusCode,
+      );
+    }
+    if (response.statusCode != 200) {
+      throw ApiException(
+        _errorDetail(response, 'Could not fetch part upload URLs.'),
+        statusCode: response.statusCode,
+      );
+    }
+
+    final parsed = jsonDecode(response.body) as Map<String, dynamic>;
+    final list = parsed['part_urls'] as List<dynamic>? ?? const [];
+    return list.cast<Map<String, dynamic>>();
+  }
+
   static Future<void> confirmUpload({
     required String attachmentId,
-    String? sessionId,
+    List<Map<String, dynamic>>? parts,
   }) async {
     final serverUrl = await PreferencesService.getServerUrl();
     final url = Uri.parse('$serverUrl/api/uploads/$attachmentId/confirm/');
 
     final body = <String, dynamic>{};
-    if (sessionId != null) body['session_id'] = sessionId;
+    if (parts != null) body['parts'] = parts;
 
     final http.Response response;
     final client = SentryHttpClient();
@@ -216,14 +287,15 @@ class ApiService {
             body: jsonEncode(body),
           )
           .timeout(_httpTimeout);
-    } on TimeoutException {
-      throw ApiException('Upload confirm timed out. Check your connection.');
     } finally {
       client.close();
     }
 
     if (response.statusCode == 401 || response.statusCode == 403) {
-      throw ApiException('Upload not authorized.', statusCode: response.statusCode);
+      throw ApiException(
+        _errorDetail(response, 'Upload not authorized.'),
+        statusCode: response.statusCode,
+      );
     }
     if (response.statusCode >= 500) {
       throw ApiException(
@@ -232,7 +304,10 @@ class ApiService {
       );
     }
     if (response.statusCode != 200) {
-      throw ApiException('Upload could not be confirmed.', statusCode: response.statusCode);
+      throw ApiException(
+        _errorDetail(response, 'Upload could not be confirmed.'),
+        statusCode: response.statusCode,
+      );
     }
   }
 

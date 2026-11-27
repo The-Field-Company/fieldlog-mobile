@@ -3,12 +3,53 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/session.dart';
 
+enum MediaUploadNetworkPolicy {
+  anyNetwork,
+  wifiOnlyLarge,
+  wifiOnlyAll;
+
+  String get storageKey => switch (this) {
+        MediaUploadNetworkPolicy.anyNetwork => 'any',
+        MediaUploadNetworkPolicy.wifiOnlyLarge => 'wifi_large',
+        MediaUploadNetworkPolicy.wifiOnlyAll => 'wifi_all',
+      };
+
+  static MediaUploadNetworkPolicy fromStorageKey(String? raw) => switch (raw) {
+        'wifi_large' => MediaUploadNetworkPolicy.wifiOnlyLarge,
+        'wifi_all' => MediaUploadNetworkPolicy.wifiOnlyAll,
+        _ => MediaUploadNetworkPolicy.anyNetwork,
+      };
+}
+
 class PreferencesService {
   static const _serverUrlKey = 'server_url';
   static const _defaultServerUrl = String.fromEnvironment('SERVER_URL');
   static const _powerSyncUrlKey = 'powersync_url';
   static const _defaultPowerSyncUrl = String.fromEnvironment('POWERSYNC_URL');
   static const _cachedSessionKey = 'cached_session';
+  static const _mediaPolicyKey = 'media_upload_network_policy';
+
+  static final ValueNotifier<MediaUploadNetworkPolicy> mediaPolicyNotifier =
+      ValueNotifier<MediaUploadNetworkPolicy>(
+    MediaUploadNetworkPolicy.anyNetwork,
+  );
+
+  static Future<MediaUploadNetworkPolicy> getMediaUploadPolicy() async {
+    final prefs = await SharedPreferences.getInstance();
+    final policy = MediaUploadNetworkPolicy.fromStorageKey(
+      prefs.getString(_mediaPolicyKey),
+    );
+    mediaPolicyNotifier.value = policy;
+    return policy;
+  }
+
+  static Future<void> setMediaUploadPolicy(
+    MediaUploadNetworkPolicy policy,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_mediaPolicyKey, policy.storageKey);
+    mediaPolicyNotifier.value = policy;
+  }
 
   static Future<String> getServerUrl() async {
     final prefs = await SharedPreferences.getInstance();

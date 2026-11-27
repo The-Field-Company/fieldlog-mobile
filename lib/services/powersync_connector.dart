@@ -1,49 +1,24 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:powersync/powersync.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
-import 'api_service.dart';
+
 import 'auth_service.dart';
+import 'media_upload_queue_service.dart';
 import 'preferences_service.dart';
-import 'sync_error_service.dart';
-import '../utils/attachment_accepts.dart';
-
-/// PowerSync backend connector mirroring ui/src/services/powersync/connector.js
-class _StreamingFileRequest extends http.BaseRequest {
-  final File file;
-  final VoidCallback? onActivity;
-
-  _StreamingFileRequest(
-    super.method,
-    super.url,
-    this.file, {
-    this.onActivity,
-  });
-
-  @override
-  http.ByteStream finalize() {
-    super.finalize();
-    final stream = file.openRead().map((chunk) {
-      onActivity?.call();
-      return chunk;
-    });
-    return http.ByteStream(stream);
-  }
-}
 
 class FieldLogConnector extends PowerSyncBackendConnector {
   static const _httpTimeout = Duration(seconds: 30);
+  static const _maxRetries = 3;
 
   @override
   Future<PowerSyncCredentials?> fetchCredentials() async {
     try {
       await AuthService.ensureFreshToken();
-    } catch (e) {
-      // Offline or refresh failed — return null so PowerSync pauses sync
-      // and retries when credentials are next requested.
+    } catch (_) {
       return null;
     }
 
@@ -51,12 +26,10 @@ class FieldLogConnector extends PowerSyncBackendConnector {
     if (token == null) return null;
 
     final powerSyncUrl = await PreferencesService.getPowerSyncUrl();
-    final endpoint = powerSyncUrl.endsWith('/') ? powerSyncUrl : '$powerSyncUrl/';
+    final endpoint =
+        powerSyncUrl.endsWith('/') ? powerSyncUrl : '$powerSyncUrl/';
 
-    return PowerSyncCredentials(
-      endpoint: endpoint,
-      token: token,
-    );
+    return PowerSyncCredentials(endpoint: endpoint, token: token);
   }
 
   @override
@@ -66,9 +39,7 @@ class FieldLogConnector extends PowerSyncBackendConnector {
 
     try {
       await AuthService.ensureFreshToken();
-    } catch (e) {
-      // Offline or refresh failed — leave the transaction in the queue so
-      // PowerSync retries it on the next sync cycle.
+    } catch (_) {
       return;
     }
     final token = await AuthService.getToken();
@@ -79,8 +50,12 @@ class FieldLogConnector extends PowerSyncBackendConnector {
       'Authorization': 'Bearer $token',
     };
 
+    var syncedSubmission = false;
+    var enqueuedLegacyMedia = false;
+
     for (final op in transaction.crud) {
       if (op.table == 'fieldlog_submission') {
+        syncedSubmission = true;
         if (op.op != UpdateType.put) continue;
 
         final record = op.opData;
@@ -90,10 +65,10 @@ class FieldLogConnector extends PowerSyncBackendConnector {
         try {
           parsedData = jsonDecode(record?['data'] as String? ?? '{}');
         } catch (e) {
-          // H4: malformed record data — log and skip rather than silently drop.
-          // The transaction will still complete so PowerSync doesn't retry forever.
           if (kDebugMode) {
-            debugPrint('[PowerSync] Skipping record ${op.id} — malformed JSON data: $e');
+            debugPrint(
+              '[PowerSync] Skipping record ${op.id} — malformed JSON data: $e',
+            );
           }
           await Sentry.captureMessage(
             'PowerSync skipped record due to malformed JSON data',
@@ -103,9 +78,13 @@ class FieldLogConnector extends PowerSyncBackendConnector {
           continue;
         }
 
-        List<String> filesToDelete = [];
         if (parsedData is Map<String, dynamic>) {
-          filesToDelete = await _uploadPendingFiles(parsedData, sessionId);
+          final migrated = await _migrateLegacyPendingFiles(
+            parsedData,
+            submissionId: op.id,
+            sessionId: (sessionId as num?)?.toInt() ?? 0,
+          );
+          if (migrated) enqueuedLegacyMedia = true;
         }
 
         final url = Uri.parse('$serverUrl/api/sessions/$sessionId/submissions/');
@@ -115,25 +94,13 @@ class FieldLogConnector extends PowerSyncBackendConnector {
           'data': parsedData,
         });
 
-        // M2: retry transient failures (timeout, 5xx) with exponential backoff.
-        // Permanent failures (4xx) are reported to Sentry and skipped so they
-        // can't block the FIFO upload queue. After all retries exhausted,
-        // throw so PowerSync retries the whole transaction on the next sync cycle.
         await _postWithRetry(
           opId: op.id,
           url: url,
           headers: headers,
           body: body,
         );
-
-        for (final path in filesToDelete) {
-          try {
-            await File(path).delete();
-          } catch (_) {}
-        }
       } else if (op.table == 'fieldlog_sessionsubscription') {
-        // id is always session_id.toString() (set by the client), so we can
-        // recover the session id from op.id for both PUT and DELETE ops.
         final sessionId = op.op == UpdateType.delete
             ? int.tryParse(op.id)
             : int.tryParse(op.opData?['session_id']?.toString() ?? '');
@@ -150,201 +117,38 @@ class FieldLogConnector extends PowerSyncBackendConnector {
     }
 
     await transaction.complete();
+    if (syncedSubmission || enqueuedLegacyMedia) {
+      MediaUploadQueueService.trigger();
+    }
   }
 
-  /// POST with exponential backoff for transient errors.
-  /// Retries on: network timeout, 5xx server errors.
-  /// Reports and skips on: 4xx client errors (permanent).
-  /// After [_maxRetries] attempts, throws to let PowerSync handle the retry.
-  static const _maxRetries = 3;
-  static const _binaryUploadTimeout = Duration(seconds: 300);
-  static const _uploadStallTimeout = Duration(seconds: 60);
-  // Minimum sustained upload rate (~512 kbit/s) used to scale the total
-  // deadline so progressing large uploads on slow field links can finish.
-  static const _minUploadBytesPerSecond = 64 * 1024;
-  static const _uploadDeadlineOverhead = Duration(seconds: 120);
-
-  @visibleForTesting
-  static Duration totalUploadDeadlineForBytes(int contentLength) {
-    final transferSeconds = contentLength > 0
-        ? (contentLength / _minUploadBytesPerSecond).ceil()
-        : 0;
-    final computed =
-        Duration(seconds: transferSeconds) + _uploadDeadlineOverhead;
-    return computed > _binaryUploadTimeout ? computed : _binaryUploadTimeout;
-  }
-
-  /// Executes a single backpressure-aware streaming PUT attempt guarded by both
-  /// an inactivity [stallTimeout] (reset on every streamed request/response
-  /// chunk and header arrival) and an overall [totalDeadline].
-  /// Closes [client] before completing with [TimeoutException] or returning.
-  @visibleForTesting
-  static Future<int> sendStreamingPutAttempt({
-    required http.Client client,
-    required Uri url,
-    required File file,
-    required int contentLength,
-    required String contentType,
-    Duration stallTimeout = _uploadStallTimeout,
-    Duration? totalDeadline,
+  Future<bool> _migrateLegacyPendingFiles(
+    Map<String, dynamic> data, {
+    required String submissionId,
+    required int sessionId,
   }) async {
-    final deadline = totalDeadline ?? totalUploadDeadlineForBytes(contentLength);
-    final timeoutCompleter = Completer<Never>();
-    Timer? stallTimer;
-    Timer? totalTimer;
-
-    void failWithTimeout(String reason, Duration duration) {
-      if (!timeoutCompleter.isCompleted) {
-        timeoutCompleter.completeError(TimeoutException(reason, duration));
-      }
-      client.close();
-    }
-
-    void resetStallTimer() {
-      stallTimer?.cancel();
-      if (timeoutCompleter.isCompleted) return;
-      stallTimer = Timer(
-        stallTimeout,
-        () => failWithTimeout(
-          'Upload stalled for ${stallTimeout.inSeconds}s',
-          stallTimeout,
-        ),
+    final items = await MediaUploadQueueService.extractSubmissionMedia(
+      data,
+      submissionId: submissionId,
+      sessionId: sessionId,
+      deterministicId: true,
+      throwOnUnsupported: false,
+    );
+    for (final item in items) {
+      await MediaUploadQueueService.enqueueItem(
+        item,
+        triggerUpload: false,
+        ifAbsent: true,
       );
     }
-
-    totalTimer = Timer(
-      deadline,
-      () => failWithTimeout(
-        'Upload exceeded total deadline of ${deadline.inSeconds}s',
-        deadline,
-      ),
-    );
-    resetStallTimer();
-
-    try {
-      final attemptFuture = () async {
-        final request = _StreamingFileRequest(
-          'PUT',
-          url,
-          file,
-          onActivity: resetStallTimer,
-        )
-          ..headers['Content-Type'] = contentType
-          ..contentLength = contentLength;
-        final streamedResponse = await client.send(request);
-        resetStallTimer();
-        await streamedResponse.stream
-            .listen((_) => resetStallTimer(), cancelOnError: true)
-            .asFuture<void>();
-        return streamedResponse.statusCode;
-      }();
-      // Avoid unhandled async errors if the underlying socket errors after
-      // timing out and closing the client.
-      attemptFuture.ignore();
-      timeoutCompleter.future.ignore();
-      return await Future.any<int>([attemptFuture, timeoutCompleter.future]);
-    } finally {
-      stallTimer?.cancel();
-      totalTimer.cancel();
-      client.close();
-    }
+    return items.isNotEmpty;
   }
 
-  Future<List<String>> _uploadPendingFiles(
-    Map<String, dynamic> data,
-    dynamic sessionId,
-  ) async {
-    final toDelete = <String>[];
-    for (final fieldKey in data.keys.toList()) {
-      final value = data[fieldKey];
-      if (value is! Map<String, dynamic> || !value.containsKey('file_path')) {
-        continue;
-      }
-
-      final filePath = value['file_path'] as String? ?? '';
-      final fileName = value['file_name'] as String? ?? '';
-      final originalName = value['original_name'] as String? ?? fileName;
-      final fileSize = value['file_size'] as int?;
-
-      final file = File(filePath);
-      if (!await file.exists()) {
-        await Sentry.captureMessage(
-          'PowerSync upload: local file missing, dropping field',
-          level: SentryLevel.error,
-          withScope: (scope) {
-            scope.setTag('field', fieldKey);
-            scope.setTag('file_path', filePath);
-          },
-        );
-        data.remove(fieldKey);
-        continue;
-      }
-
-      final ext = extensionOf(fileName.isNotEmpty ? fileName : filePath);
-      final contentType = mimeForExtension(ext);
-      final attachmentLabel = isAudioPath(fileName.isNotEmpty ? fileName : filePath)
-          ? 'An audio recording'
-          : 'A photo';
-      if (contentType == null) {
-        await Sentry.captureMessage(
-          'PowerSync upload: unsupported file extension, dropping field',
-          level: SentryLevel.error,
-          withScope: (scope) {
-            scope.setTag('field', fieldKey);
-            scope.setTag('ext', ext);
-          },
-        );
-        SyncErrorService.report(
-          'An attachment could not be uploaded — unsupported file type (.$ext). '
-          'The submission will be sent without it.',
-        );
-        data.remove(fieldKey);
-        continue;
-      }
-
-      final actualSize = await file.length();
-      final presign = await ApiService.presignUpload(
-        fileName: originalName.isNotEmpty ? originalName : fileName,
-        contentType: contentType,
-        sessionId: sessionId?.toString(),
-      );
-      final uploadUrl = presign['upload_url'] as String;
-      final attachmentId = presign['attachment_id'] as String;
-
-      try {
-        await _putWithRetry(
-          url: Uri.parse(uploadUrl),
-          file: file,
-          contentLength: actualSize,
-          contentType: contentType,
-          fileName: fileName,
-        );
-        await ApiService.confirmUpload(
-          attachmentId: attachmentId,
-          sessionId: sessionId?.toString(),
-        );
-      } on SocketException {
-        rethrow;
-      } on Exception {
-        SyncErrorService.report(
-          '$attachmentLabel in your submission could not be uploaded. '
-          'It will retry automatically.',
-        );
-        rethrow;
-      }
-
-      data[fieldKey] = [
-        {
-          'name': originalName,
-          'attachment_id': attachmentId,
-          'type': contentType,
-          'size': fileSize ?? actualSize,
-        },
-      ];
-
-      toDelete.add(filePath);
-    }
-    return toDelete;
+  Future<void> _refreshAuthHeader(Map<String, String> headers) async {
+    try {
+      final refreshed = await AuthService.refreshAccessToken();
+      headers['Authorization'] = 'Bearer $refreshed';
+    } catch (_) {}
   }
 
   Future<void> _postWithRetry({
@@ -353,152 +157,74 @@ class FieldLogConnector extends PowerSyncBackendConnector {
     required Map<String, String> headers,
     required String body,
   }) async {
-    int attempt = 0;
+    var attempt = 0;
+    final requestHeaders = Map<String, String>.from(headers);
     final client = SentryHttpClient();
     try {
-    while (true) {
-      attempt++;
-      try {
-        final response = await client
-            .post(url, headers: headers, body: body)
-            .timeout(_httpTimeout);
+      while (true) {
+        attempt++;
+        try {
+          final response = await client
+              .post(url, headers: requestHeaders, body: body)
+              .timeout(_httpTimeout);
 
-        // 200 = idempotent duplicate, 201 = new, 409 = conflict (also OK)
-        if (response.ok || response.statusCode == 409) return;
+          // 200 = idempotent duplicate, 201 = new, 409 = already exists
+          if (response.ok || response.statusCode == 409) return;
 
-        if (response.statusCode >= 400 && response.statusCode < 500) {
-          await Sentry.captureMessage(
-            'Upload rejected (${response.statusCode}) for record $opId, skipping',
-            level: SentryLevel.error,
-            withScope: (scope) {
-              scope.setTag('op_id', opId);
-              scope.setTag('http_status', response.statusCode.toString());
-            },
-          );
-          return;
+          if (MediaUploadQueueWorker.isPermanentClientStatus(
+            response.statusCode,
+          )) {
+            await Sentry.captureMessage(
+              'Submission rejected (${response.statusCode}) for record $opId, skipping',
+              level: SentryLevel.error,
+              withScope: (scope) {
+                scope.setTag('op_id', opId);
+                scope.setTag('http_status', response.statusCode.toString());
+              },
+            );
+            return;
+          }
+
+          if (response.statusCode == 401) {
+            await _refreshAuthHeader(requestHeaders);
+          }
+
+          if (attempt >= _maxRetries) {
+            final error = Exception(
+              'Submission upload failed after $_maxRetries attempts (${response.statusCode}) for record $opId',
+            );
+            await Sentry.captureException(
+              error,
+              withScope: (scope) {
+                scope.setTag('op_id', opId);
+                scope.setTag('http_status', response.statusCode.toString());
+              },
+            );
+            throw error;
+          }
+
+          if (kDebugMode) {
+            debugPrint(
+              '[PowerSync] Transient ${response.statusCode} on attempt $attempt for $opId, retrying...',
+            );
+          }
+        } on TimeoutException {
+          if (attempt >= _maxRetries) {
+            final error = Exception(
+              'Submission upload timed out after $_maxRetries attempts for record $opId.',
+            );
+            await Sentry.captureException(
+              error,
+              withScope: (scope) => scope.setTag('op_id', opId),
+            );
+            throw error;
+          }
         }
 
-        // 5xx = transient server error — fall through to retry logic below
-        if (attempt > _maxRetries) {
-          final error = Exception('Upload failed after $_maxRetries attempts (${response.statusCode}) for record $opId');
-          await Sentry.captureException(
-            error,
-            withScope: (scope) {
-              scope.setTag('op_id', opId);
-              scope.setTag('http_status', response.statusCode.toString());
-            },
-          );
-          throw error;
-        }
-
-        if (kDebugMode) {
-          debugPrint('[PowerSync] 5xx on attempt $attempt for $opId (${response.statusCode}), retrying...');
-        }
-      } on TimeoutException {
-        if (attempt > _maxRetries) {
-          final error = Exception('Upload timed out after $_maxRetries attempts for record $opId. Will retry on next sync.');
-          await Sentry.captureException(
-            error,
-            withScope: (scope) => scope.setTag('op_id', opId),
-          );
-          throw error;
-        }
-        if (kDebugMode) {
-          debugPrint('[PowerSync] Timeout on attempt $attempt for $opId, retrying...');
-        }
+        await Future.delayed(Duration(seconds: 1 << (attempt - 1)));
       }
-
-      // Exponential backoff: 1 s, 2 s, 4 s
-      await Future.delayed(Duration(seconds: 1 << (attempt - 1)));
-    }
     } finally {
       client.close();
-    }
-  }
-
-  /// Stream file to R2 with retry for transient errors.
-  /// Throws immediately on SocketException (offline) so PowerSync can
-  /// re-trigger uploadData once connectivity is restored.
-  Future<void> _putWithRetry({
-    required Uri url,
-    required File file,
-    required int contentLength,
-    required String contentType,
-    required String fileName,
-  }) async {
-    int attempt = 0;
-    while (true) {
-      attempt++;
-      final client = SentryHttpClient();
-      try {
-        final statusCode = await sendStreamingPutAttempt(
-          client: client,
-          url: url,
-          file: file,
-          contentLength: contentLength,
-          contentType: contentType,
-        );
-
-        if (statusCode >= 200 && statusCode < 300) return;
-
-        if (statusCode >= 400 && statusCode < 500) {
-          final error = Exception(
-            'R2 PUT failed permanently ($statusCode) for $fileName',
-          );
-          await Sentry.captureException(
-            error,
-            withScope: (scope) {
-              scope.setTag('file_name', fileName);
-              scope.setTag('http_status', statusCode.toString());
-            },
-          );
-          throw error;
-        }
-
-        if (attempt > _maxRetries) {
-          final error = Exception(
-            'R2 PUT failed after $_maxRetries attempts ($statusCode) for $fileName',
-          );
-          await Sentry.captureException(
-            error,
-            withScope: (scope) {
-              scope.setTag('file_name', fileName);
-              scope.setTag('http_status', statusCode.toString());
-            },
-          );
-          throw error;
-        }
-
-        if (kDebugMode) {
-          debugPrint(
-            '[PowerSync] R2 PUT 5xx on attempt $attempt for $fileName ($statusCode), retrying...',
-          );
-        }
-      } on SocketException {
-        // Device is offline — do not burn retry attempts.
-        // PowerSync retries the transaction when connectivity is restored.
-        throw Exception('R2 PUT failed: device offline ($fileName)');
-      } on TimeoutException {
-        if (attempt > _maxRetries) {
-          final error = Exception(
-            'R2 PUT timed out after $_maxRetries attempts for $fileName',
-          );
-          await Sentry.captureException(
-            error,
-            withScope: (scope) => scope.setTag('file_name', fileName),
-          );
-          throw error;
-        }
-        if (kDebugMode) {
-          debugPrint(
-            '[PowerSync] R2 PUT timeout on attempt $attempt for $fileName, retrying...',
-          );
-        }
-      } finally {
-        client.close();
-      }
-
-      await Future.delayed(Duration(seconds: 1 << (attempt - 1)));
     }
   }
 
@@ -508,15 +234,16 @@ class FieldLogConnector extends PowerSyncBackendConnector {
     required Map<String, String> headers,
     required bool isDelete,
   }) async {
-    int attempt = 0;
+    var attempt = 0;
+    final requestHeaders = Map<String, String>.from(headers);
     final client = SentryHttpClient();
     try {
       while (true) {
         attempt++;
         try {
           final response = isDelete
-              ? await client.delete(url, headers: headers).timeout(_httpTimeout)
-              : await client.post(url, headers: headers).timeout(_httpTimeout);
+              ? await client.delete(url, headers: requestHeaders).timeout(_httpTimeout)
+              : await client.post(url, headers: requestHeaders).timeout(_httpTimeout);
 
           if (response.ok ||
               response.statusCode == 204 ||
@@ -524,34 +251,34 @@ class FieldLogConnector extends PowerSyncBackendConnector {
             return;
           }
 
-          if (response.statusCode >= 400 && response.statusCode < 500) {
+          if (MediaUploadQueueWorker.isPermanentClientStatus(
+            response.statusCode,
+          )) {
             await Sentry.captureMessage(
-                'Subscription upload rejected (${response.statusCode}) for op $opId, skipping',
-                level: SentryLevel.warning,
-                withScope: (scope) {
-                  scope.setTag('op_id', opId);
-                  scope.setTag('http_status', response.statusCode.toString());
-                });
+              'Subscription upload rejected (${response.statusCode}) for op $opId, skipping',
+              level: SentryLevel.warning,
+              withScope: (scope) {
+                scope.setTag('op_id', opId);
+                scope.setTag('http_status', response.statusCode.toString());
+              },
+            );
             return;
           }
 
-          if (attempt > _maxRetries) {
-            throw Exception(
-                'Subscription upload failed after $_maxRetries attempts for op $opId');
+          if (response.statusCode == 401) {
+            await _refreshAuthHeader(requestHeaders);
           }
 
-          if (kDebugMode) {
-            debugPrint(
-                '[PowerSync] 5xx on attempt $attempt for subscription $opId, retrying...');
+          if (attempt >= _maxRetries) {
+            throw Exception(
+              'Subscription upload failed after $_maxRetries attempts for op $opId',
+            );
           }
         } on TimeoutException {
-          if (attempt > _maxRetries) {
+          if (attempt >= _maxRetries) {
             throw Exception(
-                'Subscription upload timed out after $_maxRetries attempts for op $opId');
-          }
-          if (kDebugMode) {
-            debugPrint(
-                '[PowerSync] Timeout on attempt $attempt for subscription $opId, retrying...');
+              'Subscription upload timed out after $_maxRetries attempts for op $opId',
+            );
           }
         }
 
