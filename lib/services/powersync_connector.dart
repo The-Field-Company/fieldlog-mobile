@@ -55,8 +55,8 @@ class FieldLogConnector extends PowerSyncBackendConnector {
 
     for (final op in transaction.crud) {
       if (op.table == 'fieldlog_submission') {
-        if (op.op != UpdateType.put) continue;
         syncedSubmission = true;
+        if (op.op != UpdateType.put) continue;
 
         final record = op.opData;
         final sessionId = record?['session_id'];
