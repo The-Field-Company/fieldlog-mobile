@@ -1349,6 +1349,93 @@ void main() {
   );
 
   test(
+    'tus upload reported complete by HEAD is only removed after the server confirms it',
+    () async {
+      final totalBytes = 300 * 1024;
+      final file = File('${tempDir.path}/finished_on_tusd.m4a')
+        ..writeAsBytesSync(List<int>.filled(totalBytes, 5));
+      final store = _InMemoryUploadStore();
+      final confirmCalls = <String>[];
+      var confirmFails = true;
+      var patchCalls = 0;
+
+      final gateway = _FakeGateway(
+        tusEndpoint: 'https://fieldlog.test/tus/',
+        onInit: (_, _) async => throw StateError('legacy init should not be called'),
+        onPartUrls: (_, _) async => const [],
+        onConfirm: (id, parts) async {
+          confirmCalls.add(id);
+          expect(parts, isNull);
+          if (confirmFails) {
+            confirmFails = false;
+            throw ApiException('Server error during upload confirm.', statusCode: 502);
+          }
+        },
+        onPut: (req) async {
+          await req.finalize().drain<void>();
+          if (req.method == 'HEAD') {
+            return http.StreamedResponse(
+              const Stream.empty(),
+              200,
+              headers: {
+                'tus-resumable': '1.0.0',
+                'upload-offset': '$totalBytes',
+                'upload-length': '$totalBytes',
+              },
+            );
+          }
+          if (req.method == 'PATCH') patchCalls++;
+          throw StateError('Unexpected ${req.method}');
+        },
+      );
+
+      final worker = MediaUploadQueueWorker(
+        store: store,
+        gateway: gateway,
+        readConnectivity: () =>
+            const ConnectivityState(isOnline: true, isOnWifi: true),
+        readPolicy: () => MediaUploadNetworkPolicy.anyNetwork,
+        reportUserError: (_) {},
+        reportError: (_, {attachmentId, statusCode}) async {},
+      );
+      addTearDown(worker.dispose);
+
+      await store.insert(
+        PendingUploadItem(
+          attachmentId: 'att-hook-failed',
+          submissionId: 'sub-1',
+          sessionId: 1,
+          fieldKey: 'recording',
+          localPath: file.path,
+          originalName: 'finished_on_tusd.m4a',
+          contentType: 'audio/mp4',
+          fileSize: totalBytes,
+          s3UploadId: '',
+          partSize: 0,
+          completedPartsJson: '[]',
+          tusUploadUrl: 'https://fieldlog.test/tus/submissions/done.m4a+mp',
+          uploadedOffset: 256 * 1024,
+          status: MediaUploadStatus.queued,
+          retryCount: 0,
+          lastError: '',
+          createdAt: '2026-11-27T00:00:00Z',
+        ),
+      );
+
+      await worker.drainOnce();
+      expect(confirmCalls, ['att-hook-failed']);
+      expect(store.rows['att-hook-failed']!.status, MediaUploadStatus.queued);
+      expect(file.existsSync(), isTrue);
+
+      await worker.drainOnce();
+      expect(confirmCalls, ['att-hook-failed', 'att-hook-failed']);
+      expect(patchCalls, 0);
+      expect(store.rows, isEmpty);
+      expect(file.existsSync(), isFalse);
+    },
+  );
+
+  test(
     'tus adaptive chunk size steps down to 128 KiB floor after 2 consecutive timeouts',
     () async {
       final totalBytes = 384 * 1024;
