@@ -1007,7 +1007,7 @@ class MediaUploadQueueWorker {
       if (tusEndpoint != null && tusEndpoint.isNotEmpty) {
         try {
           await _uploadViaTus(item, file, actualSize, tusEndpoint);
-          if (_stopped) throw _QueueStoppedException();
+          await _ensureFreshTokenOrThrow();
           await gateway.confirmUpload(attachmentId: item.attachmentId);
           usedTus = true;
         } on _TusUnavailableException {

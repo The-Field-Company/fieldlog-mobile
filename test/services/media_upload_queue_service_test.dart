@@ -1227,7 +1227,7 @@ void main() {
       expect(postCount, 1);
       expect(headCount, 1);
       expect(patchSizes, [256 * 1024, 256 * 1024, 188 * 1024]);
-      expect(assembled.length, totalBytes);
+      expect(assembled, List<int>.generate(totalBytes, (i) => i & 0xff));
       expect(store.rows, isEmpty);
       expect(file.existsSync(), isFalse);
     },
