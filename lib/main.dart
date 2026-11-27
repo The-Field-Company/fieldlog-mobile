@@ -14,6 +14,7 @@ import 'services/auth_service.dart';
 import 'services/api_service.dart';
 import 'services/powersync_service.dart';
 import 'services/connectivity_service.dart';
+import 'services/preferences_service.dart';
 import 'services/sync_error_service.dart';
 import 'services/telemetry_service.dart';
 
@@ -42,6 +43,8 @@ void main() async {
     },
     appRunner: () async {
       await ConnectivityService.init();
+      await PreferencesService.getMediaUploadPolicy();
+      await PreferencesService.getLowCoverageMode();
 
       String initialRoute = '/login';
       final sessionValid = await AuthService.initSession();

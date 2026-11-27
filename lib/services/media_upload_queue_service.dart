@@ -35,6 +35,8 @@ class PendingUploadItem {
   final String s3UploadId;
   final int partSize;
   final String completedPartsJson;
+  final String tusUploadUrl;
+  final int uploadedOffset;
   final String status;
   final int retryCount;
   final String lastError;
@@ -52,6 +54,8 @@ class PendingUploadItem {
     required this.s3UploadId,
     required this.partSize,
     required this.completedPartsJson,
+    this.tusUploadUrl = '',
+    this.uploadedOffset = 0,
     required this.status,
     required this.retryCount,
     required this.lastError,
@@ -71,6 +75,8 @@ class PendingUploadItem {
       s3UploadId: row['s3_upload_id'] as String? ?? '',
       partSize: (row['part_size'] as num?)?.toInt() ?? 0,
       completedPartsJson: row['completed_parts_json'] as String? ?? '[]',
+      tusUploadUrl: row['tus_upload_url'] as String? ?? '',
+      uploadedOffset: (row['uploaded_offset'] as num?)?.toInt() ?? 0,
       status: row['status'] as String? ?? MediaUploadStatus.queued,
       retryCount: (row['retry_count'] as num?)?.toInt() ?? 0,
       lastError: row['last_error'] as String? ?? '',
@@ -125,7 +131,14 @@ class PendingMediaSummary {
 class StreamingPutResult {
   final int statusCode;
   final String etag;
-  const StreamingPutResult({required this.statusCode, required this.etag});
+  final Map<String, String> headers;
+  final String body;
+  const StreamingPutResult({
+    required this.statusCode,
+    required this.etag,
+    this.headers = const {},
+    this.body = '',
+  });
 }
 
 class _StreamingSliceRequest extends http.BaseRequest {
@@ -178,6 +191,11 @@ abstract class MediaUploadStore {
     required int partSize,
     required String completedPartsJson,
   });
+  Future<void> saveTusState(
+    String attachmentId, {
+    required String tusUploadUrl,
+    required int uploadedOffset,
+  });
   Future<void> markDoneAndRemove(String attachmentId);
   Future<void> retryAllFailed();
   Future<PendingMediaSummary> readSummary({
@@ -194,15 +212,15 @@ class PowerSyncMediaUploadStore implements MediaUploadStore {
       'INSERT OR REPLACE INTO local_pending_uploads ('
       'id, submission_id, session_id, field_key, local_path, original_name, '
       'content_type, file_size, s3_upload_id, part_size, completed_parts_json, '
-      'status, retry_count, last_error, created_at'
-      ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
+      'tus_upload_url, uploaded_offset, status, retry_count, last_error, created_at'
+      ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
 
   static const insertIfAbsentSql =
       'INSERT OR IGNORE INTO local_pending_uploads ('
       'id, submission_id, session_id, field_key, local_path, original_name, '
       'content_type, file_size, s3_upload_id, part_size, completed_parts_json, '
-      'status, retry_count, last_error, created_at'
-      ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
+      'tus_upload_url, uploaded_offset, status, retry_count, last_error, created_at'
+      ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
 
   static List<Object?> insertArgs(PendingUploadItem item) => [
         item.attachmentId,
@@ -216,6 +234,8 @@ class PowerSyncMediaUploadStore implements MediaUploadStore {
         item.s3UploadId,
         item.partSize,
         item.completedPartsJson,
+        item.tusUploadUrl,
+        item.uploadedOffset,
         item.status,
         item.retryCount,
         item.lastError,
@@ -323,6 +343,20 @@ class PowerSyncMediaUploadStore implements MediaUploadStore {
   }
 
   @override
+  Future<void> saveTusState(
+    String attachmentId, {
+    required String tusUploadUrl,
+    required int uploadedOffset,
+  }) async {
+    await db.execute(
+      'UPDATE local_pending_uploads '
+      'SET tus_upload_url = ?, uploaded_offset = ? '
+      'WHERE id = ?',
+      [tusUploadUrl, uploadedOffset, attachmentId],
+    );
+  }
+
+  @override
   Future<void> markDoneAndRemove(String attachmentId) async {
     await db.execute(
       'DELETE FROM local_pending_uploads WHERE id = ?',
@@ -378,6 +412,8 @@ class PowerSyncMediaUploadStore implements MediaUploadStore {
 abstract class MediaUploadGateway {
   Future<void> ensureFreshToken();
   Future<void> forceRefreshToken();
+  Future<String?> getAccessToken();
+  Future<String?> getTusEndpoint();
   Future<Map<String, dynamic>> initUpload({
     required String attachmentId,
     required int sessionId,
@@ -405,6 +441,12 @@ class DefaultMediaUploadGateway implements MediaUploadGateway {
   Future<void> forceRefreshToken() async {
     await AuthService.refreshAccessToken();
   }
+
+  @override
+  Future<String?> getAccessToken() => AuthService.getToken();
+
+  @override
+  Future<String?> getTusEndpoint() => PreferencesService.getTusUrl();
 
   @override
   Future<Map<String, dynamic>> initUpload({
@@ -451,6 +493,10 @@ class _QueueStoppedException implements Exception {}
 
 class _AuthUnavailableException implements Exception {}
 
+class _TusUnavailableException implements Exception {}
+
+class _TusAlreadyConfirmedException implements Exception {}
+
 class _TransientNetworkException implements Exception {
   final String message;
   _TransientNetworkException(this.message);
@@ -461,15 +507,24 @@ class _TransientNetworkException implements Exception {
 class MediaUploadQueueWorker {
   static const int multipartThresholdBytes = 5 * 1024 * 1024;
   static const int partUrlBatchSize = 5;
+  static const int tusChunkSizeLowCoverage = 256 * 1024;
+  static const int tusChunkSizeCellular = 256 * 1024;
+  static const int tusChunkSizeWifi = 4 * 1024 * 1024;
+  static const int tusChunkSizeMinFloor = 128 * 1024;
+  static const String tusResumableVersion = '1.0.0';
   static const Duration _binaryUploadTimeout = Duration(seconds: 300);
   static const Duration _uploadStallTimeout = Duration(seconds: 60);
+  static const Duration _lowCoverageStallTimeout = Duration(seconds: 90);
+  static const Duration _tusControlTimeout = Duration(seconds: 30);
   static const int _minUploadBytesPerSecond = 4 * 1024;
   static const Duration _uploadDeadlineOverhead = Duration(seconds: 120);
+  static const int _maxResponseBodyBytes = 8 * 1024;
 
   final MediaUploadStore store;
   final MediaUploadGateway gateway;
   final ConnectivityState Function() readConnectivity;
   final MediaUploadNetworkPolicy Function() readPolicy;
+  final bool Function() readLowCoverageMode;
   final void Function(String message) reportUserError;
   final Future<void> Function(Object error, {String? attachmentId, int? statusCode}) reportError;
 
@@ -481,6 +536,8 @@ class MediaUploadQueueWorker {
   bool _draining = false;
   bool _reschedule = false;
   int _transientBackoffAttempt = 0;
+  int _consecutiveChunkTimeouts = 0;
+  int? _steppedDownChunkSize;
   http.Client? _activeClient;
   int? _activeItemFileSize;
   Future<void>? _drainFuture;
@@ -491,10 +548,14 @@ class MediaUploadQueueWorker {
     required this.gateway,
     required this.readConnectivity,
     required this.readPolicy,
+    bool Function()? readLowCoverageMode,
     this.reportUserError = SyncErrorService.report,
     Future<void> Function(Object error, {String? attachmentId, int? statusCode})?
         reportError,
-  }) : reportError = reportError ?? _defaultReportError;
+  })  : readLowCoverageMode = readLowCoverageMode ?? _defaultLowCoverageMode,
+        reportError = reportError ?? _defaultReportError;
+
+  static bool _defaultLowCoverageMode() => false;
 
   static Future<void> _defaultReportError(
     Object error, {
@@ -514,6 +575,64 @@ class MediaUploadQueueWorker {
   Stream<PendingMediaSummary> get summaryStream => _summaryController.stream;
 
   @visibleForTesting
+  static String encodeTusMetadata(Map<String, String> metadata) {
+    final pairs = <String>[];
+    for (final entry in metadata.entries) {
+      final key = entry.key.trim();
+      if (key.isEmpty || key.contains(' ') || key.contains(',')) continue;
+      if (entry.value.isEmpty) {
+        pairs.add(key);
+      } else {
+        pairs.add('$key ${base64Encode(utf8.encode(entry.value))}');
+      }
+    }
+    return pairs.join(',');
+  }
+
+  @visibleForTesting
+  int currentChunkSize() {
+    final base = (readLowCoverageMode() || !readConnectivity().isOnWifi)
+        ? tusChunkSizeLowCoverage
+        : tusChunkSizeWifi;
+    final stepped = _steppedDownChunkSize;
+    final chosen = stepped != null ? min(base, stepped) : base;
+    return max(tusChunkSizeMinFloor, chosen);
+  }
+
+  Duration get _activeStallTimeout =>
+      readLowCoverageMode() ? _lowCoverageStallTimeout : _uploadStallTimeout;
+
+  void _recordChunkTimeout(int chunkSizeUsed) {
+    _consecutiveChunkTimeouts++;
+    if (_consecutiveChunkTimeouts >= 2) {
+      _consecutiveChunkTimeouts = 0;
+      _steppedDownChunkSize = max(tusChunkSizeMinFloor, chunkSizeUsed ~/ 2);
+    }
+  }
+
+  static String _extractJsonDetail(String body, String fallback) {
+    if (body.isEmpty) return fallback;
+    try {
+      final parsed = jsonDecode(body);
+      if (parsed is Map && parsed['detail'] is String) {
+        final detail = (parsed['detail'] as String).trim();
+        if (detail.isNotEmpty) return detail;
+      }
+    } catch (_) {}
+    return fallback;
+  }
+
+  static bool _isAlreadyConfirmedBody(String body) {
+    if (body.isEmpty) return false;
+    try {
+      final parsed = jsonDecode(body);
+      return parsed is Map && parsed['status'] == 'confirmed';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  @visibleForTesting
   static Duration totalUploadDeadlineForBytes(int contentLength) {
     final transferSeconds = contentLength > 0
         ? (contentLength / _minUploadBytesPerSecond).ceil()
@@ -529,8 +648,10 @@ class MediaUploadQueueWorker {
     required File file,
     required int start,
     required int end,
+    String method = 'PUT',
     String? contentType,
     void Function(int bytesSent)? onBytesSent,
+    Map<String, String> headers = const {},
     Duration stallTimeout = _uploadStallTimeout,
     Duration? totalDeadline,
   }) async {
@@ -571,7 +692,7 @@ class MediaUploadQueueWorker {
     try {
       final attemptFuture = () async {
         final request = _StreamingSliceRequest(
-          'PUT',
+          method,
           url,
           file,
           start: start,
@@ -582,14 +703,33 @@ class MediaUploadQueueWorker {
         if (contentType != null && contentType.isNotEmpty) {
           request.headers['Content-Type'] = contentType;
         }
+        request.headers.addAll(headers);
         final streamedResponse = await client.send(request);
         resetStallTimer();
+        final bodyBytes = <int>[];
         await streamedResponse.stream
-            .listen((_) => resetStallTimer(), cancelOnError: true)
+            .listen(
+              (chunk) {
+                resetStallTimer();
+                if (bodyBytes.length < _maxResponseBodyBytes) {
+                  final remaining = _maxResponseBodyBytes - bodyBytes.length;
+                  bodyBytes.addAll(
+                    chunk.length <= remaining ? chunk : chunk.sublist(0, remaining),
+                  );
+                }
+              },
+              cancelOnError: true,
+            )
             .asFuture<void>();
+        final normalizedHeaders = <String, String>{
+          for (final entry in streamedResponse.headers.entries)
+            entry.key.toLowerCase(): entry.value,
+        };
         return StreamingPutResult(
           statusCode: streamedResponse.statusCode,
-          etag: (streamedResponse.headers['etag'] ?? '').trim(),
+          etag: (normalizedHeaders['etag'] ?? '').trim(),
+          headers: normalizedHeaders,
+          body: bodyBytes.isEmpty ? '' : utf8.decode(bodyBytes, allowMalformed: true),
         );
       }();
       attemptFuture.ignore();
@@ -663,7 +803,11 @@ class MediaUploadQueueWorker {
 
   void trigger({bool resetBackoff = false}) {
     if (_stopped) return;
-    if (resetBackoff) _transientBackoffAttempt = 0;
+    if (resetBackoff) {
+      _transientBackoffAttempt = 0;
+      _consecutiveChunkTimeouts = 0;
+      _steppedDownChunkSize = null;
+    }
     _retryTimer?.cancel();
     _retryTimer = null;
     if (_draining) {
@@ -752,8 +896,11 @@ class MediaUploadQueueWorker {
     required File file,
     required int start,
     required int end,
+    String method = 'PUT',
     String? contentType,
     void Function(int bytesSent)? onBytesSent,
+    Map<String, String> headers = const {},
+    Duration? stallTimeout,
   }) async {
     if (_stopped) throw _QueueStoppedException();
     final client = gateway.createHttpClient();
@@ -765,8 +912,11 @@ class MediaUploadQueueWorker {
         file: file,
         start: start,
         end: end,
+        method: method,
         contentType: contentType,
         onBytesSent: onBytesSent,
+        headers: headers,
+        stallTimeout: stallTimeout ?? _activeStallTimeout,
       );
       if (_stopped) throw _QueueStoppedException();
       return result;
@@ -774,6 +924,48 @@ class MediaUploadQueueWorker {
       if (identical(_activeClient, client)) {
         _activeClient = null;
       }
+    }
+  }
+
+  Future<StreamingPutResult> _sendManagedTusControl({
+    required String method,
+    required Uri url,
+    required Map<String, String> headers,
+  }) async {
+    if (_stopped) throw _QueueStoppedException();
+    final client = gateway.createHttpClient();
+    _activeClient = client;
+    try {
+      final request = http.Request(method, url)..headers.addAll(headers);
+      final streamed = await client.send(request).timeout(_tusControlTimeout);
+      final bodyBytes = <int>[];
+      await streamed.stream
+          .listen((chunk) {
+            if (bodyBytes.length < _maxResponseBodyBytes) {
+              final remaining = _maxResponseBodyBytes - bodyBytes.length;
+              bodyBytes.addAll(
+                chunk.length <= remaining ? chunk : chunk.sublist(0, remaining),
+              );
+            }
+          }, cancelOnError: true)
+          .asFuture<void>()
+          .timeout(_tusControlTimeout);
+      if (_stopped) throw _QueueStoppedException();
+      final normalizedHeaders = <String, String>{
+        for (final entry in streamed.headers.entries)
+          entry.key.toLowerCase(): entry.value,
+      };
+      return StreamingPutResult(
+        statusCode: streamed.statusCode,
+        etag: (normalizedHeaders['etag'] ?? '').trim(),
+        headers: normalizedHeaders,
+        body: bodyBytes.isEmpty ? '' : utf8.decode(bodyBytes, allowMalformed: true),
+      );
+    } finally {
+      if (identical(_activeClient, client)) {
+        _activeClient = null;
+      }
+      client.close();
     }
   }
 
@@ -793,7 +985,14 @@ class MediaUploadQueueWorker {
     }
 
     await store.updateStatus(item.attachmentId, MediaUploadStatus.uploading);
-    await _emitSummary(activeFileName: item.originalName, activeProgress: 0);
+    final initialProgress =
+        item.fileSize > 0 && item.uploadedOffset > 0
+            ? min(1.0, item.uploadedOffset / item.fileSize)
+            : 0.0;
+    await _emitSummary(
+      activeFileName: item.originalName,
+      activeProgress: initialProgress,
+    );
 
     try {
       await _ensureFreshTokenOrThrow();
@@ -802,31 +1001,52 @@ class MediaUploadQueueWorker {
       if (_isBlockedByWifiPolicy(actualSize)) {
         throw _PausedForWifiException();
       }
-      final init = await gateway.initUpload(
-        attachmentId: item.attachmentId,
-        sessionId: item.sessionId,
-        fileName: item.originalName,
-        contentType: item.contentType,
-        fileSize: actualSize,
-        fieldKey: item.fieldKey,
-      );
-      if (_stopped) throw _QueueStoppedException();
 
-      final mode = init['mode'] as String? ?? 'single';
-      if (mode == 'confirmed') {
-        await _finishItem(item, file);
-        return true;
+      var usedTus = false;
+      final tusEndpoint = await gateway.getTusEndpoint();
+      if (tusEndpoint != null && tusEndpoint.isNotEmpty) {
+        try {
+          await _uploadViaTus(item, file, actualSize, tusEndpoint);
+          await _ensureFreshTokenOrThrow();
+          if (_stopped) throw _QueueStoppedException();
+          await gateway.confirmUpload(attachmentId: item.attachmentId);
+          usedTus = true;
+        } on _TusUnavailableException {
+          usedTus = false;
+        } on _TusAlreadyConfirmedException {
+          if (_stopped) throw _QueueStoppedException();
+          await _finishItem(item, file);
+          return true;
+        }
       }
 
-      if (_isBlockedByWifiPolicy(actualSize)) {
-        throw _PausedForWifiException();
-      }
+      if (!usedTus) {
+        final init = await gateway.initUpload(
+          attachmentId: item.attachmentId,
+          sessionId: item.sessionId,
+          fileName: item.originalName,
+          contentType: item.contentType,
+          fileSize: actualSize,
+          fieldKey: item.fieldKey,
+        );
+        if (_stopped) throw _QueueStoppedException();
 
-      if (mode == 'multipart') {
-        await _uploadMultipart(item, file, actualSize, init);
-      } else {
-        final uploadUrl = init['upload_url'] as String;
-        await _uploadSingle(item, file, actualSize, uploadUrl);
+        final mode = init['mode'] as String? ?? 'single';
+        if (mode == 'confirmed') {
+          await _finishItem(item, file);
+          return true;
+        }
+
+        if (_isBlockedByWifiPolicy(actualSize)) {
+          throw _PausedForWifiException();
+        }
+
+        if (mode == 'multipart') {
+          await _uploadMultipart(item, file, actualSize, init);
+        } else {
+          final uploadUrl = init['upload_url'] as String;
+          await _uploadSingle(item, file, actualSize, uploadUrl);
+        }
       }
 
       if (_stopped) throw _QueueStoppedException();
@@ -957,6 +1177,306 @@ class MediaUploadQueueWorker {
       return false;
     } finally {
       _activeItemFileSize = null;
+    }
+  }
+
+  Future<Map<String, String>> _tusBaseHeaders() async {
+    final headers = <String, String>{
+      'Tus-Resumable': tusResumableVersion,
+    };
+    final token = await gateway.getAccessToken();
+    if (token != null && token.isNotEmpty) {
+      headers['Authorization'] = 'Bearer $token';
+    }
+    return headers;
+  }
+
+  Future<String> _tusCreateUpload(
+    String tusEndpoint,
+    PendingUploadItem item,
+    int fileSize,
+  ) async {
+    final endpointUri = Uri.parse(tusEndpoint);
+    final metadata = <String, String>{
+      'purpose': 'submission',
+      'attachment_id': item.attachmentId,
+      'session_id': item.sessionId.toString(),
+      'filename': item.originalName,
+      'content_type': item.contentType,
+      'filetype': item.contentType,
+      if (item.fieldKey.isNotEmpty) 'field_key': item.fieldKey,
+    };
+
+    for (var attempt = 0; attempt < 2; attempt++) {
+      final headers = {
+        ...await _tusBaseHeaders(),
+        'Upload-Length': fileSize.toString(),
+        'Upload-Metadata': encodeTusMetadata(metadata),
+      };
+      final result = await _sendManagedTusControl(
+        method: 'POST',
+        url: endpointUri,
+        headers: headers,
+      );
+
+      if (result.statusCode >= 500) {
+        throw _TransientNetworkException(
+          'tus create failed (${result.statusCode})',
+        );
+      }
+
+      if (!result.headers.containsKey('tus-resumable')) {
+        throw _TusUnavailableException();
+      }
+
+      if (result.statusCode == 401 && attempt == 0) {
+        await gateway.forceRefreshToken();
+        continue;
+      }
+
+      if (result.statusCode == 409 && _isAlreadyConfirmedBody(result.body)) {
+        throw _TusAlreadyConfirmedException();
+      }
+
+      if (result.statusCode == 201) {
+        final location = (result.headers['location'] ?? '').trim();
+        if (location.isEmpty) {
+          throw _TransientNetworkException('tus server omitted Location header');
+        }
+        return endpointUri.resolve(location).toString();
+      }
+
+      if (result.statusCode == 423) {
+        throw _TransientNetworkException('tus upload locked (423)');
+      }
+
+      if (isPermanentClientStatus(result.statusCode)) {
+        throw ApiException(
+          _extractJsonDetail(result.body, 'Upload rejected (${result.statusCode})'),
+          statusCode: result.statusCode,
+        );
+      }
+
+      throw _TransientNetworkException(
+        'tus create failed (${result.statusCode})',
+      );
+    }
+
+    throw ApiException('Upload not authorized.', statusCode: 401);
+  }
+
+  /// Queries authoritative server `Upload-Offset`, or returns `null` when the
+  /// upload has expired/disappeared (`404`/`410`).
+  Future<int?> _tusHeadOffset(String tusUploadUrl) async {
+    final uri = Uri.parse(tusUploadUrl);
+    for (var attempt = 0; attempt < 2; attempt++) {
+      final result = await _sendManagedTusControl(
+        method: 'HEAD',
+        url: uri,
+        headers: await _tusBaseHeaders(),
+      );
+
+      if (result.statusCode == 401 && attempt == 0) {
+        await gateway.forceRefreshToken();
+        continue;
+      }
+
+      if (result.statusCode == 404 || result.statusCode == 410) {
+        return null;
+      }
+
+      if (result.statusCode == 200 || result.statusCode == 204) {
+        final parsed = int.tryParse((result.headers['upload-offset'] ?? '').trim());
+        if (parsed == null || parsed < 0) {
+          throw _TransientNetworkException('tus HEAD returned invalid Upload-Offset');
+        }
+        return parsed;
+      }
+
+      if (result.statusCode == 423) {
+        throw _TransientNetworkException('tus upload locked (423)');
+      }
+
+      if (isPermanentClientStatus(result.statusCode)) {
+        throw ApiException(
+          _extractJsonDetail(result.body, 'Upload rejected (${result.statusCode})'),
+          statusCode: result.statusCode,
+        );
+      }
+
+      throw _TransientNetworkException('tus HEAD failed (${result.statusCode})');
+    }
+
+    throw ApiException('Upload not authorized.', statusCode: 401);
+  }
+
+  Future<void> _uploadViaTus(
+    PendingUploadItem item,
+    File file,
+    int fileSize,
+    String tusEndpoint,
+  ) async {
+    var tusUrl = item.tusUploadUrl;
+    var offset = 0;
+
+    if (tusUrl.isNotEmpty) {
+      final serverOffset = await _tusHeadOffset(tusUrl);
+      if (serverOffset == null) {
+        // Upload expired or removed on server — reset and start a fresh tus session.
+        tusUrl = '';
+        await store.saveTusState(
+          item.attachmentId,
+          tusUploadUrl: '',
+          uploadedOffset: 0,
+        );
+      } else {
+        offset = serverOffset;
+        await store.saveTusState(
+          item.attachmentId,
+          tusUploadUrl: tusUrl,
+          uploadedOffset: offset,
+        );
+        if (fileSize > 0) {
+          await _emitSummary(
+            activeFileName: item.originalName,
+            activeProgress: min(1.0, offset / fileSize),
+          );
+        }
+      }
+    }
+
+    if (tusUrl.isEmpty) {
+      tusUrl = await _tusCreateUpload(tusEndpoint, item, fileSize);
+      offset = 0;
+      await store.saveTusState(
+        item.attachmentId,
+        tusUploadUrl: tusUrl,
+        uploadedOffset: 0,
+      );
+    }
+
+    if (offset >= fileSize) {
+      return;
+    }
+
+    var conflictRetries = 0;
+    while (offset < fileSize) {
+      if (_stopped) throw _QueueStoppedException();
+      if (!readConnectivity().isOnline) {
+        throw const SocketException('Device offline');
+      }
+      if (_isBlockedByWifiPolicy(fileSize)) {
+        throw _PausedForWifiException();
+      }
+
+      await _ensureFreshTokenOrThrow();
+      final chunkSize = currentChunkSize();
+      final end = min(offset + chunkSize, fileSize);
+
+      StreamingPutResult result;
+      var refreshedFor401 = false;
+      while (true) {
+        try {
+          result = await _sendManagedPut(
+            method: 'PATCH',
+            url: Uri.parse(tusUrl),
+            file: file,
+            start: offset,
+            end: end,
+            contentType: 'application/offset+octet-stream',
+            headers: {
+              ...await _tusBaseHeaders(),
+              'Upload-Offset': offset.toString(),
+            },
+          );
+        } on TimeoutException {
+          _recordChunkTimeout(chunkSize);
+          rethrow;
+        }
+
+        if (result.statusCode == 401 && !refreshedFor401) {
+          refreshedFor401 = true;
+          await gateway.forceRefreshToken();
+          continue;
+        }
+        break;
+      }
+
+      if (result.statusCode == 204 || result.statusCode == 200) {
+        final nextOffset =
+            int.tryParse((result.headers['upload-offset'] ?? '').trim()) ?? end;
+        offset = nextOffset;
+        conflictRetries = 0;
+        _consecutiveChunkTimeouts = 0;
+        _transientBackoffAttempt = 0;
+        await store.saveTusState(
+          item.attachmentId,
+          tusUploadUrl: tusUrl,
+          uploadedOffset: offset,
+        );
+        await _emitSummary(
+          activeFileName: item.originalName,
+          activeProgress: fileSize > 0 ? min(1.0, offset / fileSize) : 1.0,
+        );
+        continue;
+      }
+
+      final interrupted = result.statusCode == 400 &&
+          result.body.contains('ERR_UPLOAD_INTERRUPTED');
+      if (result.statusCode == 409 || interrupted) {
+        conflictRetries++;
+        if (conflictRetries > 3) {
+          throw _TransientNetworkException(
+            interrupted
+                ? 'Repeated tus upload interruption (400)'
+                : 'Repeated tus offset mismatch (409)',
+          );
+        }
+        final reconciled = await _tusHeadOffset(tusUrl);
+        if (reconciled == null) {
+          await store.saveTusState(
+            item.attachmentId,
+            tusUploadUrl: '',
+            uploadedOffset: 0,
+          );
+          throw _TransientNetworkException(
+            'tus upload disappeared after ${result.statusCode}',
+          );
+        }
+        offset = reconciled;
+        await store.saveTusState(
+          item.attachmentId,
+          tusUploadUrl: tusUrl,
+          uploadedOffset: offset,
+        );
+        continue;
+      }
+
+      if (result.statusCode == 404 || result.statusCode == 410) {
+        await store.saveTusState(
+          item.attachmentId,
+          tusUploadUrl: '',
+          uploadedOffset: 0,
+        );
+        throw _TransientNetworkException(
+          'tus upload expired (${result.statusCode})',
+        );
+      }
+
+      if (result.statusCode == 423) {
+        throw _TransientNetworkException('tus upload locked (423)');
+      }
+
+      if (isPermanentClientStatus(result.statusCode)) {
+        throw ApiException(
+          _extractJsonDetail(result.body, 'Upload rejected (${result.statusCode})'),
+          statusCode: result.statusCode,
+        );
+      }
+
+      throw _TransientNetworkException(
+        'tus PATCH failed (${result.statusCode})',
+      );
     }
   }
 
@@ -1225,6 +1745,7 @@ class MediaUploadQueueService {
   static Future<void> start(PowerSyncDatabase db) async {
     await stop();
     await PreferencesService.getMediaUploadPolicy();
+    await PreferencesService.getLowCoverageMode();
 
     final store = PowerSyncMediaUploadStore(db);
     await store.resetStuckUploading();
@@ -1234,6 +1755,7 @@ class MediaUploadQueueService {
       gateway: DefaultMediaUploadGateway(),
       readConnectivity: () => ConnectivityService.state,
       readPolicy: () => PreferencesService.mediaPolicyNotifier.value,
+      readLowCoverageMode: () => PreferencesService.lowCoverageModeNotifier.value,
     );
     _worker = worker;
 
@@ -1253,6 +1775,7 @@ class MediaUploadQueueService {
       _worker?.onPolicyOrConnectivityChanged();
     });
     PreferencesService.mediaPolicyNotifier.addListener(_onPolicyChanged);
+    PreferencesService.lowCoverageModeNotifier.addListener(_onPolicyChanged);
 
     worker.trigger();
   }
@@ -1426,6 +1949,7 @@ class MediaUploadQueueService {
 
   static Future<void> stop() async {
     PreferencesService.mediaPolicyNotifier.removeListener(_onPolicyChanged);
+    PreferencesService.lowCoverageModeNotifier.removeListener(_onPolicyChanged);
     await _connectivitySub?.cancel();
     _connectivitySub = null;
     await _summaryForwardSub?.cancel();

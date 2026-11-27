@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fieldlog_mobile/services/audio_service.dart';
+import 'package:fieldlog_mobile/services/preferences_service.dart';
 import 'package:fieldlog_mobile/utils/attachment_accepts.dart';
 import 'package:fieldlog_mobile/widgets/field_widgets/file_field_widget.dart';
 import 'package:fieldlog_mobile/widgets/formkit_renderer.dart';
@@ -13,6 +14,7 @@ class _FakeAudioBackend implements AudioBackend {
   bool micPermission = true;
   bool playbackStarted = false;
   bool recordingPaused = false;
+  bool? lastRecordingLowCoverage;
   String? activeRecordingPath;
   final List<String> startedPlaybackPaths = [];
   VoidCallback? onPlaybackCompleteCallback;
@@ -39,8 +41,12 @@ class _FakeAudioBackend implements AudioBackend {
   }
 
   @override
-  Future<void> startRecording({required String path}) async {
+  Future<void> startRecording({
+    required String path,
+    bool lowCoverage = false,
+  }) async {
     activeRecordingPath = path;
+    lastRecordingLowCoverage = lowCoverage;
     recordingPaused = false;
   }
 
@@ -267,6 +273,7 @@ void main() {
       await tester.tap(find.text('Record Audio'));
       await tester.pump();
 
+      expect(fakeBackend.lastRecordingLowCoverage, isFalse);
       expect(find.text('Pause'), findsOneWidget);
       expect(find.text('Save'), findsOneWidget);
       expect(find.text('Discard'), findsOneWidget);
@@ -298,6 +305,24 @@ void main() {
       await tester.pump();
       expect(fakeBackend.playbackStarted, isTrue);
       expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
+    });
+
+    testWidgets('recording passes Low Coverage Mode to the audio backend', (
+      tester,
+    ) async {
+      PreferencesService.lowCoverageModeNotifier.value = true;
+      addTearDown(() => PreferencesService.lowCoverageModeNotifier.value = false);
+
+      await tester.pumpWidget(
+        wrap(FileFieldWidget(label: 'Voice Note', accepts: 'audio', onChanged: (_) {})),
+      );
+
+      await tester.tap(find.text('Add audio'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Record Audio'));
+      await tester.pump();
+
+      expect(fakeBackend.lastRecordingLowCoverage, isTrue);
     });
 
     testWidgets('rejects unsupported file extension with error snackbar', (

@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 import '../../services/audio_service.dart';
+import '../../services/preferences_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/attachment_accepts.dart';
 import 'audio_preview_card.dart';
@@ -26,6 +27,16 @@ class FileFieldWidget extends StatefulWidget {
     this.accepts,
     this.initialValue,
   });
+
+  @visibleForTesting
+  static ({double maxWidth, int imageQuality}) imagePickSettings({
+    required bool lowCoverage,
+  }) {
+    if (lowCoverage) {
+      return (maxWidth: 1600, imageQuality: 80);
+    }
+    return (maxWidth: 2048, imageQuality: 85);
+  }
 
   @override
   State<FileFieldWidget> createState() => _FileFieldWidgetState();
@@ -115,10 +126,13 @@ class _FileFieldWidgetState extends State<FileFieldWidget>
     try {
       await AudioService.stopPlayback(ownerId: _ownerId);
 
+      final pickSettings = FileFieldWidget.imagePickSettings(
+        lowCoverage: PreferencesService.lowCoverageModeNotifier.value,
+      );
       final picked = await _picker.pickImage(
         source: source,
-        imageQuality: 85,
-        maxWidth: 2048,
+        imageQuality: pickSettings.imageQuality,
+        maxWidth: pickSettings.maxWidth,
       );
       if (picked == null) return;
 
@@ -294,7 +308,11 @@ class _FileFieldWidgetState extends State<FileFieldWidget>
       final path = '${dir.path}/$id.m4a';
 
       try {
-        await AudioService.startRecording(path: path, ownerId: _ownerId);
+        await AudioService.startRecording(
+          path: path,
+          ownerId: _ownerId,
+          lowCoverage: PreferencesService.lowCoverageModeNotifier.value,
+        );
       } on StateError {
         _showSnackBar('Finish or discard the other active recording first.');
         return;

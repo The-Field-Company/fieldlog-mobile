@@ -45,6 +45,8 @@ const schema = Schema([
     Column.text('s3_upload_id'),
     Column.integer('part_size'),
     Column.text('completed_parts_json'),
+    Column.text('tus_upload_url'),
+    Column.integer('uploaded_offset'),
     Column.text('status'),
     Column.integer('retry_count'),
     Column.text('last_error'),

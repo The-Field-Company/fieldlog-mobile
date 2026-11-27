@@ -1,10 +1,13 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:fieldlog_mobile/services/api_service.dart';
+import 'package:fieldlog_mobile/services/audio_service.dart';
 import 'package:fieldlog_mobile/services/connectivity_service.dart';
 import 'package:fieldlog_mobile/services/media_upload_queue_service.dart';
 import 'package:fieldlog_mobile/services/preferences_service.dart';
+import 'package:fieldlog_mobile/widgets/field_widgets/file_field_widget.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 
@@ -78,6 +81,8 @@ class _InMemoryUploadStore implements MediaUploadStore {
       s3UploadId: cur.s3UploadId,
       partSize: cur.partSize,
       completedPartsJson: cur.completedPartsJson,
+      tusUploadUrl: cur.tusUploadUrl,
+      uploadedOffset: cur.uploadedOffset,
       status: status,
       retryCount: retryCount ?? cur.retryCount,
       lastError: lastError ?? cur.lastError,
@@ -106,6 +111,37 @@ class _InMemoryUploadStore implements MediaUploadStore {
       s3UploadId: uploadId,
       partSize: partSize,
       completedPartsJson: completedPartsJson,
+      tusUploadUrl: cur.tusUploadUrl,
+      uploadedOffset: cur.uploadedOffset,
+      status: cur.status,
+      retryCount: cur.retryCount,
+      lastError: cur.lastError,
+      createdAt: cur.createdAt,
+    );
+  }
+
+  @override
+  Future<void> saveTusState(
+    String attachmentId, {
+    required String tusUploadUrl,
+    required int uploadedOffset,
+  }) async {
+    final cur = rows[attachmentId];
+    if (cur == null) return;
+    rows[attachmentId] = PendingUploadItem(
+      attachmentId: cur.attachmentId,
+      submissionId: cur.submissionId,
+      sessionId: cur.sessionId,
+      fieldKey: cur.fieldKey,
+      localPath: cur.localPath,
+      originalName: cur.originalName,
+      contentType: cur.contentType,
+      fileSize: cur.fileSize,
+      s3UploadId: cur.s3UploadId,
+      partSize: cur.partSize,
+      completedPartsJson: cur.completedPartsJson,
+      tusUploadUrl: tusUploadUrl,
+      uploadedOffset: uploadedOffset,
       status: cur.status,
       retryCount: cur.retryCount,
       lastError: cur.lastError,
@@ -189,6 +225,7 @@ class _FakeGateway implements MediaUploadGateway {
   final Future<http.StreamedResponse> Function(http.BaseRequest req) onPut;
   final Future<void> Function()? onForceRefresh;
   final void Function()? onClientClose;
+  final String? tusEndpoint;
 
   _FakeGateway({
     required this.onInit,
@@ -197,6 +234,7 @@ class _FakeGateway implements MediaUploadGateway {
     required this.onPut,
     this.onForceRefresh,
     this.onClientClose,
+    this.tusEndpoint,
   });
 
   @override
@@ -206,6 +244,12 @@ class _FakeGateway implements MediaUploadGateway {
   Future<void> forceRefreshToken() async {
     await onForceRefresh?.call();
   }
+
+  @override
+  Future<String?> getAccessToken() async => 'jwt-token';
+
+  @override
+  Future<String?> getTusEndpoint() async => tusEndpoint;
 
   @override
   Future<Map<String, dynamic>> initUpload({
@@ -1078,6 +1122,700 @@ void main() {
 
       expect(putCalls, 0);
       expect(store.rows['att-init-race']!.status, MediaUploadStatus.pausedWifi);
+    },
+  );
+
+  test(
+    'tus resumes from exact Upload-Offset after mid-chunk SocketException using 256 KiB chunks in Low Coverage Mode',
+    () async {
+      final totalBytes = 700 * 1024;
+      final file = File('${tempDir.path}/voice_2g.m4a')
+        ..writeAsBytesSync(List<int>.generate(totalBytes, (i) => i & 0xff));
+      final store = _InMemoryUploadStore();
+      var serverOffset = 0;
+      var dropChunk2 = true;
+      final patchSizes = <int>[];
+      var headCount = 0;
+      var postCount = 0;
+      final assembled = <int>[];
+
+      final gateway = _FakeGateway(
+        tusEndpoint: 'https://fieldlog.test/tus/',
+        onInit: (_, _) async => throw StateError('legacy init should not be called'),
+        onPartUrls: (_, _) async => const [],
+        onConfirm: (_, _) async {},
+        onPut: (req) async {
+          if (req.method == 'POST') {
+            postCount++;
+            expect(req.headers['Tus-Resumable'], '1.0.0');
+            expect(req.headers['Upload-Length'], '$totalBytes');
+            expect(req.headers['Authorization'], 'Bearer jwt-token');
+            expect(req.headers['Upload-Metadata'], contains('attachment_id '));
+            await req.finalize().drain<void>();
+            return http.StreamedResponse(
+              const Stream.empty(),
+              201,
+              headers: {
+                'tus-resumable': '1.0.0',
+                'location': 'https://fieldlog.test/tus/submissions/att-tus-1.m4a+mp1',
+              },
+            );
+          }
+          if (req.method == 'HEAD') {
+            headCount++;
+            await req.finalize().drain<void>();
+            return http.StreamedResponse(
+              const Stream.empty(),
+              200,
+              headers: {
+                'tus-resumable': '1.0.0',
+                'upload-offset': '$serverOffset',
+                'upload-length': '$totalBytes',
+              },
+            );
+          }
+          if (req.method == 'PATCH') {
+            final reqOffset = int.parse(req.headers['Upload-Offset']!);
+            final body = await req.finalize().expand((c) => c).toList();
+            if (reqOffset == 256 * 1024 && dropChunk2) {
+              dropChunk2 = false;
+              throw const SocketException('2G tower drop mid-chunk');
+            }
+            expect(reqOffset, serverOffset);
+            patchSizes.add(body.length);
+            assembled.addAll(body);
+            serverOffset += body.length;
+            return http.StreamedResponse(
+              const Stream.empty(),
+              204,
+              headers: {
+                'tus-resumable': '1.0.0',
+                'upload-offset': '$serverOffset',
+              },
+            );
+          }
+          throw StateError('Unexpected method ${req.method}');
+        },
+      );
+
+      final worker = MediaUploadQueueWorker(
+        store: store,
+        gateway: gateway,
+        readConnectivity: () =>
+            const ConnectivityState(isOnline: true, isOnWifi: true),
+        readPolicy: () => MediaUploadNetworkPolicy.anyNetwork,
+        readLowCoverageMode: () => true,
+        reportUserError: (_) {},
+        reportError: (_, {attachmentId, statusCode}) async {},
+      );
+      addTearDown(worker.dispose);
+
+      await store.insert(_item('att-tus-1', file));
+
+      await worker.drainOnce();
+      expect(postCount, 1);
+      expect(headCount, 0);
+      expect(patchSizes, [256 * 1024]);
+      expect(store.rows['att-tus-1']!.status, MediaUploadStatus.queued);
+      expect(store.rows['att-tus-1']!.uploadedOffset, 256 * 1024);
+      expect(
+        store.rows['att-tus-1']!.tusUploadUrl,
+        'https://fieldlog.test/tus/submissions/att-tus-1.m4a+mp1',
+      );
+
+      await worker.drainOnce();
+      expect(postCount, 1);
+      expect(headCount, 1);
+      expect(patchSizes, [256 * 1024, 256 * 1024, 188 * 1024]);
+      expect(assembled, List<int>.generate(totalBytes, (i) => i & 0xff));
+      expect(store.rows, isEmpty);
+      expect(file.existsSync(), isFalse);
+    },
+  );
+
+  test(
+    'tus reconciles 409 Conflict offset mismatch via HEAD and restarts cleanly on 404/410 expired upload',
+    () async {
+      final totalBytes = 512 * 1024;
+      final file = File('${tempDir.path}/reconcile.m4a')
+        ..writeAsBytesSync(List<int>.filled(totalBytes, 7));
+      final store = _InMemoryUploadStore();
+      var serverOffset = 256 * 1024;
+      var return410Once = true;
+      var return409Once = true;
+      var postCalls = 0;
+
+      final gateway = _FakeGateway(
+        tusEndpoint: 'https://fieldlog.test/tus/',
+        onInit: (_, _) async => throw StateError('unexpected legacy init'),
+        onPartUrls: (_, _) async => const [],
+        onConfirm: (_, _) async {},
+        onPut: (req) async {
+          await req.finalize().drain<void>();
+          if (req.method == 'HEAD') {
+            if (return410Once) {
+              return410Once = false;
+              return http.StreamedResponse(
+                const Stream.empty(),
+                410,
+                headers: {'tus-resumable': '1.0.0'},
+              );
+            }
+            return http.StreamedResponse(
+              const Stream.empty(),
+              200,
+              headers: {
+                'tus-resumable': '1.0.0',
+                'upload-offset': '$serverOffset',
+              },
+            );
+          }
+          if (req.method == 'POST') {
+            postCalls++;
+            serverOffset = 0;
+            return http.StreamedResponse(
+              const Stream.empty(),
+              201,
+              headers: {
+                'tus-resumable': '1.0.0',
+                'location': 'https://fieldlog.test/tus/submissions/fresh-$postCalls.m4a+mp',
+              },
+            );
+          }
+          if (req.method == 'PATCH') {
+            final reqOffset = int.parse(req.headers['Upload-Offset']!);
+            if (return409Once) {
+              return409Once = false;
+              serverOffset = 256 * 1024;
+              return http.StreamedResponse(
+                const Stream.empty(),
+                409,
+                headers: {'tus-resumable': '1.0.0'},
+              );
+            }
+            expect(reqOffset, serverOffset);
+            serverOffset += 256 * 1024;
+            return http.StreamedResponse(
+              const Stream.empty(),
+              204,
+              headers: {
+                'tus-resumable': '1.0.0',
+                'upload-offset': '$serverOffset',
+              },
+            );
+          }
+          throw StateError('Unexpected ${req.method}');
+        },
+      );
+
+      final worker = MediaUploadQueueWorker(
+        store: store,
+        gateway: gateway,
+        readConnectivity: () =>
+            const ConnectivityState(isOnline: true, isOnWifi: false),
+        readPolicy: () => MediaUploadNetworkPolicy.anyNetwork,
+        reportUserError: (_) {},
+        reportError: (_, {attachmentId, statusCode}) async {},
+      );
+      addTearDown(worker.dispose);
+
+      await store.insert(
+        PendingUploadItem(
+          attachmentId: 'att-410-409',
+          submissionId: 'sub-1',
+          sessionId: 1,
+          fieldKey: 'recording',
+          localPath: file.path,
+          originalName: 'reconcile.m4a',
+          contentType: 'audio/mp4',
+          fileSize: totalBytes,
+          s3UploadId: '',
+          partSize: 0,
+          completedPartsJson: '[]',
+          tusUploadUrl: 'https://fieldlog.test/tus/expired-url',
+          uploadedOffset: 128 * 1024,
+          status: MediaUploadStatus.queued,
+          retryCount: 0,
+          lastError: '',
+          createdAt: '2026-11-26T00:00:00Z',
+        ),
+      );
+
+      await worker.drainOnce();
+      expect(postCalls, 1);
+      expect(serverOffset, totalBytes);
+      expect(store.rows, isEmpty);
+    },
+  );
+
+  test(
+    'tus upload reported complete by HEAD is only removed after the server confirms it',
+    () async {
+      final totalBytes = 300 * 1024;
+      final file = File('${tempDir.path}/finished_on_tusd.m4a')
+        ..writeAsBytesSync(List<int>.filled(totalBytes, 5));
+      final store = _InMemoryUploadStore();
+      final confirmCalls = <String>[];
+      var confirmFails = true;
+      var patchCalls = 0;
+
+      final gateway = _FakeGateway(
+        tusEndpoint: 'https://fieldlog.test/tus/',
+        onInit: (_, _) async => throw StateError('legacy init should not be called'),
+        onPartUrls: (_, _) async => const [],
+        onConfirm: (id, parts) async {
+          confirmCalls.add(id);
+          expect(parts, isNull);
+          if (confirmFails) {
+            confirmFails = false;
+            throw ApiException('Server error during upload confirm.', statusCode: 502);
+          }
+        },
+        onPut: (req) async {
+          await req.finalize().drain<void>();
+          if (req.method == 'HEAD') {
+            return http.StreamedResponse(
+              const Stream.empty(),
+              200,
+              headers: {
+                'tus-resumable': '1.0.0',
+                'upload-offset': '$totalBytes',
+                'upload-length': '$totalBytes',
+              },
+            );
+          }
+          if (req.method == 'PATCH') patchCalls++;
+          throw StateError('Unexpected ${req.method}');
+        },
+      );
+
+      final worker = MediaUploadQueueWorker(
+        store: store,
+        gateway: gateway,
+        readConnectivity: () =>
+            const ConnectivityState(isOnline: true, isOnWifi: true),
+        readPolicy: () => MediaUploadNetworkPolicy.anyNetwork,
+        reportUserError: (_) {},
+        reportError: (_, {attachmentId, statusCode}) async {},
+      );
+      addTearDown(worker.dispose);
+
+      await store.insert(
+        PendingUploadItem(
+          attachmentId: 'att-hook-failed',
+          submissionId: 'sub-1',
+          sessionId: 1,
+          fieldKey: 'recording',
+          localPath: file.path,
+          originalName: 'finished_on_tusd.m4a',
+          contentType: 'audio/mp4',
+          fileSize: totalBytes,
+          s3UploadId: '',
+          partSize: 0,
+          completedPartsJson: '[]',
+          tusUploadUrl: 'https://fieldlog.test/tus/submissions/done.m4a+mp',
+          uploadedOffset: 256 * 1024,
+          status: MediaUploadStatus.queued,
+          retryCount: 0,
+          lastError: '',
+          createdAt: '2026-11-27T00:00:00Z',
+        ),
+      );
+
+      await worker.drainOnce();
+      expect(confirmCalls, ['att-hook-failed']);
+      expect(store.rows['att-hook-failed']!.status, MediaUploadStatus.queued);
+      expect(file.existsSync(), isTrue);
+
+      await worker.drainOnce();
+      expect(confirmCalls, ['att-hook-failed', 'att-hook-failed']);
+      expect(patchCalls, 0);
+      expect(store.rows, isEmpty);
+      expect(file.existsSync(), isFalse);
+    },
+  );
+
+  test(
+    'tus adaptive chunk size steps down to 128 KiB floor after 2 consecutive timeouts',
+    () async {
+      final totalBytes = 384 * 1024;
+      final file = File('${tempDir.path}/timeout_stepdown.m4a')
+        ..writeAsBytesSync(List<int>.filled(totalBytes, 3));
+      final store = _InMemoryUploadStore();
+      var timeoutsLeft = 2;
+      final observedPatchLengths = <int>[];
+      var serverOffset = 0;
+
+      final gateway = _FakeGateway(
+        tusEndpoint: 'https://fieldlog.test/tus/',
+        onInit: (_, _) async => throw StateError('unexpected legacy init'),
+        onPartUrls: (_, _) async => const [],
+        onConfirm: (_, _) async {},
+        onPut: (req) async {
+          if (req.method == 'POST') {
+            await req.finalize().drain<void>();
+            return http.StreamedResponse(
+              const Stream.empty(),
+              201,
+              headers: {
+                'tus-resumable': '1.0.0',
+                'location': 'https://fieldlog.test/tus/stepdown+mp',
+              },
+            );
+          }
+          if (req.method == 'HEAD') {
+            await req.finalize().drain<void>();
+            return http.StreamedResponse(
+              const Stream.empty(),
+              200,
+              headers: {
+                'tus-resumable': '1.0.0',
+                'upload-offset': '$serverOffset',
+              },
+            );
+          }
+          if (req.method == 'PATCH') {
+            final len = await req.finalize().fold<int>(0, (s, c) => s + c.length);
+            observedPatchLengths.add(len);
+            if (timeoutsLeft > 0) {
+              timeoutsLeft--;
+              throw TimeoutException('2G stall');
+            }
+            serverOffset += len;
+            return http.StreamedResponse(
+              const Stream.empty(),
+              204,
+              headers: {
+                'tus-resumable': '1.0.0',
+                'upload-offset': '$serverOffset',
+              },
+            );
+          }
+          throw StateError('Unexpected ${req.method}');
+        },
+      );
+
+      final worker = MediaUploadQueueWorker(
+        store: store,
+        gateway: gateway,
+        readConnectivity: () =>
+            const ConnectivityState(isOnline: true, isOnWifi: false),
+        readPolicy: () => MediaUploadNetworkPolicy.anyNetwork,
+        readLowCoverageMode: () => true,
+        reportUserError: (_) {},
+        reportError: (_, {attachmentId, statusCode}) async {},
+      );
+      addTearDown(worker.dispose);
+
+      expect(worker.currentChunkSize(), MediaUploadQueueWorker.tusChunkSizeLowCoverage);
+      await store.insert(_item('att-stepdown', file));
+
+      await worker.drainOnce();
+      await worker.drainOnce();
+      expect(worker.currentChunkSize(), MediaUploadQueueWorker.tusChunkSizeMinFloor);
+
+      await worker.drainOnce();
+      expect(
+        observedPatchLengths,
+        [256 * 1024, 256 * 1024, 128 * 1024, 128 * 1024, 128 * 1024],
+      );
+      expect(store.rows, isEmpty);
+    },
+  );
+
+  test(
+    'tus falls back to legacy initUpload when server does not speak tus (no Tus-Resumable header)',
+    () async {
+      final file = File('${tempDir.path}/fallback.jpg')
+        ..writeAsBytesSync(List<int>.filled(1024, 5));
+      final store = _InMemoryUploadStore();
+      var legacyInitCalled = false;
+      var legacyConfirmCalled = false;
+
+      final gateway = _FakeGateway(
+        tusEndpoint: 'https://legacy.test/tus/',
+        onInit: (id, size) async {
+          legacyInitCalled = true;
+          return {
+            'attachment_id': id,
+            'mode': 'single',
+            'upload_url': 'https://s3.test/single/$id',
+          };
+        },
+        onPartUrls: (_, _) async => const [],
+        onConfirm: (_, _) async => legacyConfirmCalled = true,
+        onPut: (req) async {
+          await req.finalize().drain<void>();
+          if (req.method == 'POST') {
+            return http.StreamedResponse(const Stream.empty(), 404);
+          }
+          return http.StreamedResponse(const Stream.empty(), 200);
+        },
+      );
+
+      final worker = MediaUploadQueueWorker(
+        store: store,
+        gateway: gateway,
+        readConnectivity: () =>
+            const ConnectivityState(isOnline: true, isOnWifi: true),
+        readPolicy: () => MediaUploadNetworkPolicy.anyNetwork,
+        reportUserError: (_) {},
+        reportError: (_, {attachmentId, statusCode}) async {},
+      );
+      addTearDown(worker.dispose);
+
+      await store.insert(_item('att-fallback', file, name: 'fallback.jpg', contentType: 'image/jpeg'));
+      await worker.drainOnce();
+
+      expect(legacyInitCalled, isTrue);
+      expect(legacyConfirmCalled, isTrue);
+      expect(store.rows, isEmpty);
+    },
+  );
+
+  test(
+    'tus create 5xx without Tus-Resumable header retries tus instead of falling back to legacy',
+    () async {
+      final file = File('${tempDir.path}/proxy.jpg')
+        ..writeAsBytesSync(List<int>.filled(1024, 6));
+      final store = _InMemoryUploadStore();
+
+      final gateway = _FakeGateway(
+        tusEndpoint: 'https://fieldlog.test/tus/',
+        onInit: (_, _) async => throw StateError('legacy init should not be called'),
+        onPartUrls: (_, _) async => const [],
+        onConfirm: (_, _) async {},
+        onPut: (req) async {
+          await req.finalize().drain<void>();
+          if (req.method == 'POST') {
+            return http.StreamedResponse(const Stream.empty(), 502);
+          }
+          throw StateError('Unexpected ${req.method}');
+        },
+      );
+
+      final worker = MediaUploadQueueWorker(
+        store: store,
+        gateway: gateway,
+        readConnectivity: () =>
+            const ConnectivityState(isOnline: true, isOnWifi: true),
+        readPolicy: () => MediaUploadNetworkPolicy.anyNetwork,
+        reportUserError: (_) {},
+        reportError: (_, {attachmentId, statusCode}) async {},
+      );
+      addTearDown(worker.dispose);
+
+      await store.insert(_item('att-proxy', file, name: 'proxy.jpg', contentType: 'image/jpeg'));
+      await worker.drainOnce();
+
+      final row = store.rows['att-proxy']!;
+      expect(row.status, MediaUploadStatus.queued);
+      expect(row.retryCount, 1);
+    },
+  );
+
+  test(
+    'tus handles 400 pre-finish rejection as failed_permanent and 409 already confirmed as done',
+    () async {
+      final badFile = File('${tempDir.path}/bad.png')
+        ..writeAsBytesSync(List<int>.filled(512, 1));
+      final dupFile = File('${tempDir.path}/dup.png')
+        ..writeAsBytesSync(List<int>.filled(512, 2));
+      final store = _InMemoryUploadStore();
+      final userErrors = <String>[];
+
+      final gateway = _FakeGateway(
+        tusEndpoint: 'https://fieldlog.test/tus/',
+        onInit: (_, _) async => throw StateError('unexpected legacy init'),
+        onPartUrls: (_, _) async => const [],
+        onConfirm: (_, _) async {},
+        onPut: (req) async {
+          await req.finalize().drain<void>();
+          if (req.method == 'POST') {
+            final meta = req.headers['Upload-Metadata'] ?? '';
+            if (meta.contains(base64Encode(utf8.encode('att-dup')))) {
+              return http.StreamedResponse(
+                Stream.value(utf8.encode('{"status":"confirmed","detail":"Already confirmed."}')),
+                409,
+                headers: {'tus-resumable': '1.0.0'},
+              );
+            }
+            return http.StreamedResponse(
+              const Stream.empty(),
+              201,
+              headers: {
+                'tus-resumable': '1.0.0',
+                'location': 'https://fieldlog.test/tus/submissions/bad.png+mp',
+              },
+            );
+          }
+          if (req.method == 'PATCH') {
+            return http.StreamedResponse(
+              Stream.value(utf8.encode('{"detail":"Content type not allowed."}')),
+              400,
+              headers: {'tus-resumable': '1.0.0'},
+            );
+          }
+          throw StateError('Unexpected ${req.method}');
+        },
+      );
+
+      final worker = MediaUploadQueueWorker(
+        store: store,
+        gateway: gateway,
+        readConnectivity: () =>
+            const ConnectivityState(isOnline: true, isOnWifi: true),
+        readPolicy: () => MediaUploadNetworkPolicy.anyNetwork,
+        reportUserError: userErrors.add,
+        reportError: (_, {attachmentId, statusCode}) async {},
+      );
+      addTearDown(worker.dispose);
+
+      await store.insert(_item('att-bad-magic', badFile, name: 'bad.png', contentType: 'image/png'));
+      await store.insert(_item('att-dup', dupFile, name: 'dup.png', contentType: 'image/png'));
+
+      await worker.drainOnce();
+
+      expect(store.rows['att-bad-magic']!.status, MediaUploadStatus.failedPermanent);
+      expect(store.rows['att-bad-magic']!.lastError, 'Content type not allowed.');
+      expect(store.rows.containsKey('att-dup'), isFalse);
+      expect(dupFile.existsSync(), isFalse);
+      expect(userErrors, hasLength(1));
+    },
+  );
+
+  test(
+    'tus 400 ERR_UPLOAD_INTERRUPTED reconciles offset with HEAD and resumes instead of failing',
+    () async {
+      final bytes = List<int>.generate(1024, (i) => i % 251);
+      final file = File('${tempDir.path}/clip.mp4')..writeAsBytesSync(bytes);
+      final store = _InMemoryUploadStore();
+      final userErrors = <String>[];
+      final patchOffsets = <String?>[];
+      final received = <int>[];
+      var patches = 0;
+      var confirms = 0;
+
+      final gateway = _FakeGateway(
+        tusEndpoint: 'https://fieldlog.test/tus/',
+        onInit: (_, _) async => throw StateError('unexpected legacy init'),
+        onPartUrls: (_, _) async => const [],
+        onConfirm: (_, _) async => confirms++,
+        onPut: (req) async {
+          final body = <int>[];
+          await req.finalize().forEach(body.addAll);
+          if (req.method == 'POST') {
+            return http.StreamedResponse(
+              const Stream.empty(),
+              201,
+              headers: {
+                'tus-resumable': '1.0.0',
+                'location': 'https://fieldlog.test/tus/submissions/clip.mp4+mp',
+              },
+            );
+          }
+          if (req.method == 'HEAD') {
+            return http.StreamedResponse(
+              const Stream.empty(),
+              200,
+              headers: {
+                'tus-resumable': '1.0.0',
+                'upload-offset': '${received.length}',
+                'upload-length': '${bytes.length}',
+              },
+            );
+          }
+          if (req.method == 'PATCH') {
+            patches++;
+            patchOffsets.add(req.headers['Upload-Offset']);
+            if (patches == 1) {
+              received.addAll(body.take(300));
+              return http.StreamedResponse(
+                Stream.value(utf8.encode(
+                  'ERR_UPLOAD_INTERRUPTED: upload has been interrupted by another request for this upload resource\n',
+                )),
+                400,
+                headers: {'tus-resumable': '1.0.0'},
+              );
+            }
+            received.addAll(body);
+            return http.StreamedResponse(
+              const Stream.empty(),
+              204,
+              headers: {
+                'tus-resumable': '1.0.0',
+                'upload-offset': '${received.length}',
+              },
+            );
+          }
+          throw StateError('Unexpected ${req.method}');
+        },
+      );
+
+      final worker = MediaUploadQueueWorker(
+        store: store,
+        gateway: gateway,
+        readConnectivity: () =>
+            const ConnectivityState(isOnline: true, isOnWifi: true),
+        readPolicy: () => MediaUploadNetworkPolicy.anyNetwork,
+        reportUserError: userErrors.add,
+        reportError: (_, {attachmentId, statusCode}) async {},
+      );
+      addTearDown(worker.dispose);
+
+      await store.insert(
+        _item('att-interrupted', file, name: 'clip.mp4', contentType: 'video/mp4'),
+      );
+      await worker.drainOnce();
+
+      expect(patchOffsets, ['0', '300']);
+      expect(received, bytes);
+      expect(confirms, 1);
+      expect(store.rows.containsKey('att-interrupted'), isFalse);
+      expect(userErrors, isEmpty);
+    },
+  );
+
+  test(
+    'Low Coverage Mode selects 48 kbps mono audio, 1600px/80 photos, and 256 KiB vs 4 MiB Wi-Fi chunks',
+    () {
+      final lowAudio = AudioService.recordingConfig(lowCoverage: true);
+      final stdAudio = AudioService.recordingConfig(lowCoverage: false);
+      expect(lowAudio.bitRate, 48000);
+      expect(lowAudio.sampleRate, 24000);
+      expect(lowAudio.numChannels, 1);
+      expect(stdAudio.bitRate, 128000);
+      expect(stdAudio.sampleRate, 44100);
+
+      final lowPhoto = FileFieldWidget.imagePickSettings(lowCoverage: true);
+      final stdPhoto = FileFieldWidget.imagePickSettings(lowCoverage: false);
+      expect(lowPhoto.maxWidth, 1600);
+      expect(lowPhoto.imageQuality, 80);
+      expect(stdPhoto.maxWidth, 2048);
+      expect(stdPhoto.imageQuality, 85);
+
+      var lowCoverage = false;
+      var onWifi = true;
+      final worker = MediaUploadQueueWorker(
+        store: _InMemoryUploadStore(),
+        gateway: _FakeGateway(
+          onInit: (_, _) async => {},
+          onPartUrls: (_, _) async => const [],
+          onConfirm: (_, _) async {},
+          onPut: (_) async => http.StreamedResponse(const Stream.empty(), 200),
+        ),
+        readConnectivity: () => ConnectivityState(isOnline: true, isOnWifi: onWifi),
+        readPolicy: () => MediaUploadNetworkPolicy.anyNetwork,
+        readLowCoverageMode: () => lowCoverage,
+      );
+      addTearDown(worker.dispose);
+
+      expect(worker.currentChunkSize(), 4 * 1024 * 1024);
+      lowCoverage = true;
+      expect(worker.currentChunkSize(), 256 * 1024);
+      lowCoverage = false;
+      onWifi = false;
+      expect(worker.currentChunkSize(), 256 * 1024);
     },
   );
 }
