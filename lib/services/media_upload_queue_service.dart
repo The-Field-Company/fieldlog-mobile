@@ -1098,6 +1098,9 @@ class MediaUploadQueueWorker {
             partNumbers: [partNumber],
           );
           if (refreshed.isNotEmpty) {
+            if (_isBlockedByWifiPolicy(fileSize)) {
+              throw _PausedForWifiException();
+            }
             partUrl = refreshed.first['url'] as String;
             result = await _sendManagedPut(
               url: Uri.parse(partUrl),
