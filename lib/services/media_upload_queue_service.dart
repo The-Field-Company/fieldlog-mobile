@@ -133,6 +133,7 @@ class _StreamingSliceRequest extends http.BaseRequest {
   final int start;
   final int end;
   final VoidCallback? onActivity;
+  final void Function(int bytesSent)? onBytesSent;
 
   _StreamingSliceRequest(
     super.method,
@@ -141,13 +142,17 @@ class _StreamingSliceRequest extends http.BaseRequest {
     required this.start,
     required this.end,
     this.onActivity,
+    this.onBytesSent,
   });
 
   @override
   http.ByteStream finalize() {
     super.finalize();
+    var sent = 0;
     final stream = file.openRead(start, end).map((chunk) {
       onActivity?.call();
+      sent += chunk.length;
+      onBytesSent?.call(sent);
       return chunk;
     });
     return http.ByteStream(stream);
@@ -263,7 +268,7 @@ class PowerSyncMediaUploadStore implements MediaUploadStore {
     if (submissionId.isEmpty) return false;
     try {
       final rows = await db.getAll(
-        "SELECT 1 FROM ps_crud WHERE json_extract(data, '\$.type') = 'fieldlog_submission' AND json_extract(data, '\$.id') = ? LIMIT 1",
+        r"SELECT 1 FROM ps_crud WHERE json_extract(data, '$.type') = 'fieldlog_submission' AND json_extract(data, '$.id') = ? LIMIT 1",
         [submissionId],
       );
       return rows.isNotEmpty;
@@ -525,6 +530,7 @@ class MediaUploadQueueWorker {
     required int start,
     required int end,
     String? contentType,
+    void Function(int bytesSent)? onBytesSent,
     Duration stallTimeout = _uploadStallTimeout,
     Duration? totalDeadline,
   }) async {
@@ -571,6 +577,7 @@ class MediaUploadQueueWorker {
           start: start,
           end: end,
           onActivity: resetStallTimer,
+          onBytesSent: onBytesSent,
         )..contentLength = contentLength;
         if (contentType != null && contentType.isNotEmpty) {
           request.headers['Content-Type'] = contentType;
@@ -746,6 +753,7 @@ class MediaUploadQueueWorker {
     required int start,
     required int end,
     String? contentType,
+    void Function(int bytesSent)? onBytesSent,
   }) async {
     if (_stopped) throw _QueueStoppedException();
     final client = gateway.createHttpClient();
@@ -758,6 +766,7 @@ class MediaUploadQueueWorker {
         start: start,
         end: end,
         contentType: contentType,
+        onBytesSent: onBytesSent,
       );
       if (_stopped) throw _QueueStoppedException();
       return result;
@@ -807,6 +816,10 @@ class MediaUploadQueueWorker {
       if (mode == 'confirmed') {
         await _finishItem(item, file);
         return true;
+      }
+
+      if (_isBlockedByWifiPolicy(actualSize)) {
+        throw _PausedForWifiException();
       }
 
       if (mode == 'multipart') {
@@ -871,7 +884,9 @@ class MediaUploadQueueWorker {
         MediaUploadStatus.queued,
         retryCount: item.retryCount + 1,
       );
-      _scheduleRetry(item.retryCount + 1);
+      if (readConnectivity().isOnline) {
+        _scheduleRetry(item.retryCount + 1);
+      }
       return false;
     } on ApiException catch (e) {
       if (_stopped) return false;
@@ -888,7 +903,9 @@ class MediaUploadQueueWorker {
           retryCount: item.retryCount + 1,
           lastError: e.message,
         );
-        _scheduleRetry(item.retryCount + 1);
+        if (readConnectivity().isOnline) {
+          _scheduleRetry(item.retryCount + 1);
+        }
         return false;
       }
       if (isPermanentClientStatus(e.statusCode)) {
@@ -921,7 +938,9 @@ class MediaUploadQueueWorker {
         retryCount: item.retryCount + 1,
         lastError: e.message,
       );
-      _scheduleRetry(item.retryCount + 1);
+      if (readConnectivity().isOnline) {
+        _scheduleRetry(item.retryCount + 1);
+      }
       return false;
     } catch (e) {
       if (_stopped) return false;
@@ -932,7 +951,9 @@ class MediaUploadQueueWorker {
         lastError: e.toString(),
       );
       await reportError(e, attachmentId: item.attachmentId);
-      _scheduleRetry(item.retryCount + 1);
+      if (readConnectivity().isOnline) {
+        _scheduleRetry(item.retryCount + 1);
+      }
       return false;
     } finally {
       _activeItemFileSize = null;
@@ -945,12 +966,27 @@ class MediaUploadQueueWorker {
     int fileSize,
     String uploadUrl,
   ) async {
+    var lastReportedProgress = 0.0;
     final result = await _sendManagedPut(
       url: Uri.parse(uploadUrl),
       file: file,
       start: 0,
       end: fileSize,
       contentType: item.contentType,
+      onBytesSent: fileSize > 0
+          ? (sent) {
+              final progress = min(0.95, (sent / fileSize) * 0.95);
+              if (progress - lastReportedProgress >= 0.05) {
+                lastReportedProgress = progress;
+                unawaited(
+                  _emitSummary(
+                    activeFileName: item.originalName,
+                    activeProgress: progress,
+                  ),
+                );
+              }
+            }
+          : null,
     );
     _checkPutStatus(result.statusCode, item.originalName);
     await _emitSummary(activeFileName: item.originalName, activeProgress: 0.95);
@@ -1105,12 +1141,12 @@ class MediaUploadQueueWorker {
 
   Future<void> _finishItem(PendingUploadItem item, File file) async {
     _transientBackoffAttempt = 0;
+    await store.markDoneAndRemove(item.attachmentId);
     try {
       if (await file.exists()) {
         await file.delete();
       }
     } catch (_) {}
-    await store.markDoneAndRemove(item.attachmentId);
     await _emitSummary();
   }
 

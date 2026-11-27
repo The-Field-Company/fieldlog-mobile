@@ -190,8 +190,6 @@ class ApiService {
             body: jsonEncode(body),
           )
           .timeout(_httpTimeout);
-    } on TimeoutException {
-      throw ApiException('Upload init timed out. Check your connection.');
     } finally {
       client.close();
     }
@@ -238,8 +236,6 @@ class ApiService {
             body: jsonEncode({'part_numbers': partNumbers}),
           )
           .timeout(_httpTimeout);
-    } on TimeoutException {
-      throw ApiException('Fetching part URLs timed out.');
     } finally {
       client.close();
     }
@@ -291,8 +287,6 @@ class ApiService {
             body: jsonEncode(body),
           )
           .timeout(_httpTimeout);
-    } on TimeoutException {
-      throw ApiException('Upload confirm timed out. Check your connection.');
     } finally {
       client.close();
     }

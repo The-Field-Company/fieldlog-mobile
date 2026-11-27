@@ -166,11 +166,18 @@ class _InMemoryUploadStore implements MediaUploadStore {
 
 class _FakeHttpClient extends http.BaseClient {
   final Future<http.StreamedResponse> Function(http.BaseRequest req) handler;
-  _FakeHttpClient(this.handler);
+  final void Function()? onClose;
+  _FakeHttpClient(this.handler, {this.onClose});
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) =>
       handler(request);
+
+  @override
+  void close() {
+    onClose?.call();
+    super.close();
+  }
 }
 
 class _FakeGateway implements MediaUploadGateway {
@@ -181,6 +188,7 @@ class _FakeGateway implements MediaUploadGateway {
       onConfirm;
   final Future<http.StreamedResponse> Function(http.BaseRequest req) onPut;
   final Future<void> Function()? onForceRefresh;
+  final void Function()? onClientClose;
 
   _FakeGateway({
     required this.onInit,
@@ -188,6 +196,7 @@ class _FakeGateway implements MediaUploadGateway {
     required this.onConfirm,
     required this.onPut,
     this.onForceRefresh,
+    this.onClientClose,
   });
 
   @override
@@ -224,7 +233,8 @@ class _FakeGateway implements MediaUploadGateway {
       onConfirm(attachmentId, parts);
 
   @override
-  http.Client createHttpClient() => _FakeHttpClient(onPut);
+  http.Client createHttpClient() =>
+      _FakeHttpClient(onPut, onClose: onClientClose);
 }
 
 PendingUploadItem _item(
@@ -913,6 +923,7 @@ void main() {
       var policy = MediaUploadNetworkPolicy.anyNetwork;
       final putStarted = Completer<void>();
       final putNeverCompletes = Completer<http.StreamedResponse>();
+      var clientClosed = false;
 
       final gateway = _FakeGateway(
         onInit: (id, size) async => {
@@ -926,6 +937,12 @@ void main() {
           return putNeverCompletes.future;
         },
         onConfirm: (_, _) async {},
+        onClientClose: () {
+          clientClosed = true;
+          if (!putNeverCompletes.isCompleted) {
+            putNeverCompletes.completeError(http.ClientException('aborted'));
+          }
+        },
       );
 
       final worker = MediaUploadQueueWorker(
@@ -945,10 +962,55 @@ void main() {
 
       policy = MediaUploadNetworkPolicy.wifiOnlyAll;
       worker.onPolicyOrConnectivityChanged();
-      putNeverCompletes.completeError(http.ClientException('aborted'));
       await drainFuture;
 
+      expect(clientClosed, isTrue);
       expect(store.rows['att-abort']!.status, MediaUploadStatus.pausedWifi);
+    },
+  );
+
+  test(
+    'switching to Wi-Fi only during initUpload pauses single upload before PUT',
+    () async {
+      final file = File('${tempDir.path}/init-race.jpg')
+        ..writeAsBytesSync(List<int>.filled(1024, 5));
+      final store = _InMemoryUploadStore();
+      var policy = MediaUploadNetworkPolicy.anyNetwork;
+      var putCalls = 0;
+
+      final gateway = _FakeGateway(
+        onInit: (id, size) async {
+          policy = MediaUploadNetworkPolicy.wifiOnlyAll;
+          return {
+            'attachment_id': id,
+            'mode': 'single',
+            'upload_url': 'https://s3.test/single/$id',
+          };
+        },
+        onPartUrls: (_, _) async => const [],
+        onPut: (req) async {
+          putCalls++;
+          return http.StreamedResponse(const Stream.empty(), 200);
+        },
+        onConfirm: (_, _) async {},
+      );
+
+      final worker = MediaUploadQueueWorker(
+        store: store,
+        gateway: gateway,
+        readConnectivity: () =>
+            const ConnectivityState(isOnline: true, isOnWifi: false),
+        readPolicy: () => policy,
+        reportUserError: (_) {},
+        reportError: (_, {attachmentId, statusCode}) async {},
+      );
+      addTearDown(worker.dispose);
+
+      await store.insert(_item('att-init-race', file, name: 'init-race.jpg'));
+      await worker.drainOnce();
+
+      expect(putCalls, 0);
+      expect(store.rows['att-init-race']!.status, MediaUploadStatus.pausedWifi);
     },
   );
 }

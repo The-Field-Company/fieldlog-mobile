@@ -188,7 +188,7 @@ class _MediaSyncSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SafeArea(
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
         child: StreamBuilder<PendingMediaSummary>(
           initialData: MediaUploadQueueService.currentSummary,
@@ -448,7 +448,7 @@ class _SyncStatusTextState extends State<SyncStatusText> {
         color = AppColors.accentLight;
       } else if (_media.failedCount > 0) {
         icon = Icons.error_outline;
-        text = 'Observation synced \u2014 media upload failed';
+        text = 'Observation synced \u2014 some media failed to upload';
         color = AppColors.error;
       } else {
         icon = Icons.cloud_done_outlined;

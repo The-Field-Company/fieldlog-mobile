@@ -70,8 +70,9 @@ class _EntryScreenState extends State<EntryScreen> {
   }
 
   Future<void> _logout() async {
-    final pendingMedia = MediaUploadQueueService.currentSummary.pendingTotal;
-    if (pendingMedia > 0) {
+    final summary = MediaUploadQueueService.currentSummary;
+    if (summary.hasActivity) {
+      final totalFiles = summary.pendingTotal + summary.failedCount;
       final confirmed = await showModalBottomSheet<bool>(
         context: context,
         shape: const RoundedRectangleBorder(
@@ -94,7 +95,7 @@ class _EntryScreenState extends State<EntryScreen> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  '$pendingMedia media file(s) have not finished uploading yet. Signing out will permanently delete them from this device.',
+                  '$totalFiles media file(s) have not uploaded yet (including any failed uploads). Signing out will permanently delete them from this device.',
                   style: AppTypography.textStyle(
                     fontSize: 13,
                     color: AppColors.textSecondary,
