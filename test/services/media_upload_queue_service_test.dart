@@ -1685,6 +1685,98 @@ void main() {
   );
 
   test(
+    'tus 400 ERR_UPLOAD_INTERRUPTED reconciles offset with HEAD and resumes instead of failing',
+    () async {
+      final bytes = List<int>.generate(1024, (i) => i % 251);
+      final file = File('${tempDir.path}/clip.mp4')..writeAsBytesSync(bytes);
+      final store = _InMemoryUploadStore();
+      final userErrors = <String>[];
+      final patchOffsets = <String?>[];
+      final received = <int>[];
+      var patches = 0;
+      var confirms = 0;
+
+      final gateway = _FakeGateway(
+        tusEndpoint: 'https://fieldlog.test/tus/',
+        onInit: (_, _) async => throw StateError('unexpected legacy init'),
+        onPartUrls: (_, _) async => const [],
+        onConfirm: (_, _) async => confirms++,
+        onPut: (req) async {
+          final body = <int>[];
+          await req.finalize().forEach(body.addAll);
+          if (req.method == 'POST') {
+            return http.StreamedResponse(
+              const Stream.empty(),
+              201,
+              headers: {
+                'tus-resumable': '1.0.0',
+                'location': 'https://fieldlog.test/tus/submissions/clip.mp4+mp',
+              },
+            );
+          }
+          if (req.method == 'HEAD') {
+            return http.StreamedResponse(
+              const Stream.empty(),
+              200,
+              headers: {
+                'tus-resumable': '1.0.0',
+                'upload-offset': '${received.length}',
+                'upload-length': '${bytes.length}',
+              },
+            );
+          }
+          if (req.method == 'PATCH') {
+            patches++;
+            patchOffsets.add(req.headers['Upload-Offset']);
+            if (patches == 1) {
+              received.addAll(body.take(300));
+              return http.StreamedResponse(
+                Stream.value(utf8.encode(
+                  'ERR_UPLOAD_INTERRUPTED: upload has been interrupted by another request for this upload resource\n',
+                )),
+                400,
+                headers: {'tus-resumable': '1.0.0'},
+              );
+            }
+            received.addAll(body);
+            return http.StreamedResponse(
+              const Stream.empty(),
+              204,
+              headers: {
+                'tus-resumable': '1.0.0',
+                'upload-offset': '${received.length}',
+              },
+            );
+          }
+          throw StateError('Unexpected ${req.method}');
+        },
+      );
+
+      final worker = MediaUploadQueueWorker(
+        store: store,
+        gateway: gateway,
+        readConnectivity: () =>
+            const ConnectivityState(isOnline: true, isOnWifi: true),
+        readPolicy: () => MediaUploadNetworkPolicy.anyNetwork,
+        reportUserError: userErrors.add,
+        reportError: (_, {attachmentId, statusCode}) async {},
+      );
+      addTearDown(worker.dispose);
+
+      await store.insert(
+        _item('att-interrupted', file, name: 'clip.mp4', contentType: 'video/mp4'),
+      );
+      await worker.drainOnce();
+
+      expect(patchOffsets, ['0', '300']);
+      expect(received, bytes);
+      expect(confirms, 1);
+      expect(store.rows.containsKey('att-interrupted'), isFalse);
+      expect(userErrors, isEmpty);
+    },
+  );
+
+  test(
     'Low Coverage Mode selects 48 kbps mono audio, 1600px/80 photos, and 256 KiB vs 4 MiB Wi-Fi chunks',
     () {
       final lowAudio = AudioService.recordingConfig(lowCoverage: true);

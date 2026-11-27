@@ -1421,10 +1421,16 @@ class MediaUploadQueueWorker {
         continue;
       }
 
-      if (result.statusCode == 409) {
+      final interrupted = result.statusCode == 400 &&
+          result.body.contains('ERR_UPLOAD_INTERRUPTED');
+      if (result.statusCode == 409 || interrupted) {
         conflictRetries++;
         if (conflictRetries > 3) {
-          throw _TransientNetworkException('Repeated tus offset mismatch (409)');
+          throw _TransientNetworkException(
+            interrupted
+                ? 'Repeated tus upload interruption (400)'
+                : 'Repeated tus offset mismatch (409)',
+          );
         }
         final reconciled = await _tusHeadOffset(tusUrl);
         if (reconciled == null) {
@@ -1433,7 +1439,9 @@ class MediaUploadQueueWorker {
             tusUploadUrl: '',
             uploadedOffset: 0,
           );
-          throw _TransientNetworkException('tus upload disappeared after 409');
+          throw _TransientNetworkException(
+            'tus upload disappeared after ${result.statusCode}',
+          );
         }
         offset = reconciled;
         await store.saveTusState(
