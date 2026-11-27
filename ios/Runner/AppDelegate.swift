@@ -1,3 +1,4 @@
+import AVFoundation
 import Flutter
 import CoreLocation
 import UIKit
@@ -45,9 +46,66 @@ import UIKit
         }
         UIApplication.shared.open(url) { opened in result(opened) }
       }
+
+      let mediaChannel = FlutterMethodChannel(
+        name: "com.fieldlog/media",
+        binaryMessenger: controller.binaryMessenger
+      )
+      mediaChannel.setMethodCallHandler { call, result in
+        guard call.method == "getVideoThumbnail" else {
+          result(FlutterMethodNotImplemented)
+          return
+        }
+        guard
+          let arguments = call.arguments as? [String: Any],
+          let path = arguments["path"] as? String,
+          !path.isEmpty
+        else {
+          result(nil)
+          return
+        }
+        let requestedMax = (arguments["maxWidth"] as? Int) ?? 640
+        let maxEdge = CGFloat(min(max(requestedMax, 64), 1280))
+
+        DispatchQueue.global(qos: .userInitiated).async {
+          let payload = Self.extractVideoThumbnail(path: path, maxEdge: maxEdge)
+          DispatchQueue.main.async {
+            result(payload)
+          }
+        }
+      }
     }
 
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+
+  private static func extractVideoThumbnail(path: String, maxEdge: CGFloat) -> [String: Any]? {
+    guard FileManager.default.fileExists(atPath: path) else { return nil }
+    let asset = AVURLAsset(url: URL(fileURLWithPath: path))
+    let seconds = CMTimeGetSeconds(asset.duration)
+    let durationMs: Int? = (seconds.isFinite && seconds > 0) ? Int(seconds * 1000.0) : nil
+
+    let generator = AVAssetImageGenerator(asset: asset)
+    generator.appliesPreferredTrackTransform = true
+    generator.maximumSize = CGSize(width: maxEdge, height: maxEdge)
+
+    let targetTime = CMTime(seconds: 0.1, preferredTimescale: 600)
+    let cgImage = (try? generator.copyCGImage(at: targetTime, actualTime: nil))
+      ?? (try? generator.copyCGImage(at: .zero, actualTime: nil))
+
+    let jpegData = cgImage.flatMap { UIImage(cgImage: $0).jpegData(compressionQuality: 0.8) }
+    if jpegData == nil && durationMs == nil {
+      return nil
+    }
+
+    var payload: [String: Any] = [:]
+    if let jpegData {
+      payload["bytes"] = FlutterStandardTypedData(bytes: jpegData)
+    }
+    if let durationMs {
+      payload["durationMs"] = durationMs
+    }
+    return payload
   }
 }
 

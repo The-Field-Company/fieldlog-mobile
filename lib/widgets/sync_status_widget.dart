@@ -7,6 +7,7 @@ import '../services/connectivity_service.dart';
 import '../services/media_upload_queue_service.dart';
 import '../services/powersync_service.dart';
 import '../services/preferences_service.dart';
+import '../utils/attachment_accepts.dart';
 
 class SyncStatusWidget extends StatefulWidget {
   final void Function(SyncStateTransition transition)? onTransition;
@@ -106,6 +107,7 @@ class _SyncStatusWidgetState extends State<SyncStatusWidget> {
     late final String label;
     late final Color color;
     final bool showSpinner;
+    double? progressFraction;
 
     if (!_connected) {
       icon = Icons.cloud_off_outlined;
@@ -119,7 +121,13 @@ class _SyncStatusWidgetState extends State<SyncStatusWidget> {
       showSpinner = true;
     } else if (_media.isUploading || _media.queuedCount > 0) {
       icon = Icons.cloud_upload_outlined;
-      label = 'Media (${_media.pendingTotal})';
+      if (_media.isUploading && _media.activeProgress != null) {
+        final pct = (_media.activeProgress! * 100).round().clamp(0, 99);
+        label = 'Media $pct%';
+        progressFraction = _media.activeProgress!.clamp(0.0, 1.0);
+      } else {
+        label = 'Media (${_media.pendingTotal})';
+      }
       color = AppColors.accentLight;
       showSpinner = true;
     } else if (_media.isPausedForWifi) {
@@ -160,7 +168,14 @@ class _SyncStatusWidgetState extends State<SyncStatusWidget> {
               SizedBox(
                 width: 12,
                 height: 12,
-                child: CircularProgressIndicator(strokeWidth: 1.5, color: color),
+                child: CircularProgressIndicator(
+                  value: progressFraction,
+                  strokeWidth: 1.5,
+                  color: color,
+                  backgroundColor: progressFraction != null
+                      ? color.withValues(alpha: 0.22)
+                      : null,
+                ),
               )
             else
               Icon(icon, size: 14, color: color),
@@ -230,6 +245,23 @@ class _MediaSyncSheet extends StatelessWidget {
                             color: AppColors.accent,
                             backgroundColor: AppColors.dividerColor,
                           ),
+                          if (summary.activeBytesSent != null &&
+                              summary.activeTotalBytes != null &&
+                              summary.activeTotalBytes! > 0) ...[
+                            const SizedBox(height: 4),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: Text(
+                                '${formatFileSize(summary.activeBytesSent!)} / ${formatFileSize(summary.activeTotalBytes!)}',
+                                style: AppTypography.textStyle(
+                                  fontSize: 11,
+                                  color: AppColors.textTertiary,
+                                ).copyWith(
+                                  fontFeatures: const [FontFeature.tabularFigures()],
+                                ),
+                              ),
+                            ),
+                          ],
                         ],
                         if (summary.failedCount > 0) ...[
                           const SizedBox(height: 8),
@@ -442,6 +474,13 @@ class _SyncStatusTextState extends State<SyncStatusText> {
 
   @override
   Widget build(BuildContext context) {
+    if (_uploadConfirmed &&
+        _media.isUploading &&
+        _media.activeTotalBytes != null &&
+        _media.activeTotalBytes! > 0) {
+      return _UploadProgressCard(summary: _media);
+    }
+
     late final IconData icon;
     late final String text;
     late final Color color;
@@ -492,6 +531,130 @@ class _SyncStatusTextState extends State<SyncStatusText> {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _UploadProgressCard extends StatelessWidget {
+  final PendingMediaSummary summary;
+
+  const _UploadProgressCard({required this.summary});
+
+  @override
+  Widget build(BuildContext context) {
+    final fraction = (summary.activeProgress ?? 0.0).clamp(0.0, 1.0);
+    final percent = (fraction * 100).round().clamp(0, 99);
+    final label = summary.activeFileName != null && summary.activeFileName!.isNotEmpty
+        ? 'Uploading ${summary.activeFileName}'
+        : 'Uploading media';
+    final sent = summary.activeBytesSent ?? 0;
+    final total = summary.activeTotalBytes ?? 0;
+
+    return Container(
+      width: double.infinity,
+      constraints: const BoxConstraints(maxWidth: 300),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppColors.accent.withValues(alpha: 0.035),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.dividerColor),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.cloud_upload_outlined,
+                size: 15,
+                color: AppColors.accent,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTypography.textStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '$percent%',
+                style: AppTypography.textStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.accent,
+                ).copyWith(
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: TweenAnimationBuilder<double>(
+              tween: Tween<double>(end: fraction),
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOutCubic,
+              builder: (_, value, _) => LinearProgressIndicator(
+                value: value,
+                minHeight: 5,
+                color: AppColors.accent,
+                backgroundColor: AppColors.accent.withValues(alpha: 0.12),
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Align(
+            alignment: Alignment.centerRight,
+            child: Text(
+              '${formatFileSize(sent)} / ${formatFileSize(total)}',
+              style: AppTypography.textStyle(
+                fontSize: 11,
+                color: AppColors.textSecondary,
+              ).copyWith(
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Hairline progress bar pinned under app bars while a background media upload runs.
+class UploadProgressBar extends StatelessWidget {
+  const UploadProgressBar({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<PendingMediaSummary>(
+      initialData: MediaUploadQueueService.currentSummary,
+      stream: MediaUploadQueueService.summaryStream,
+      builder: (_, snapshot) {
+        final summary = snapshot.data ?? const PendingMediaSummary();
+        if (!summary.isUploading || summary.activeProgress == null) {
+          return const SizedBox.shrink();
+        }
+        return TweenAnimationBuilder<double>(
+          tween: Tween<double>(end: summary.activeProgress!.clamp(0.0, 1.0)),
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          builder: (_, value, _) => LinearProgressIndicator(
+            value: value,
+            minHeight: 2.5,
+            color: AppColors.accentLight,
+            backgroundColor: AppColors.accent.withValues(alpha: 0.1),
+          ),
+        );
+      },
     );
   }
 }

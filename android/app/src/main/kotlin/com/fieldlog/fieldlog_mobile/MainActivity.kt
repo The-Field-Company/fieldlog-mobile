@@ -3,9 +3,11 @@ package com.fieldlog.fieldlog_mobile
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Bundle
 import android.os.Build
@@ -15,11 +17,17 @@ import android.provider.Settings
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.util.concurrent.Executors
+import kotlin.math.max
+import kotlin.math.roundToInt
 
 class MainActivity : FlutterActivity() {
     companion object {
         private const val CHANNEL = "com.fieldlog/location"
         private const val LINKS_CHANNEL = "com.fieldlog/links"
+        private const val MEDIA_CHANNEL = "com.fieldlog/media"
         private const val LOCATION_PERMISSION_REQUEST = 7402
         private const val LOCATION_TIMEOUT_MS = 10_000L
         private const val FUSED_PROVIDER = "fused"
@@ -28,9 +36,15 @@ class MainActivity : FlutterActivity() {
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val mediaExecutor = Executors.newSingleThreadExecutor()
     private var pendingPermissionResult: MethodChannel.Result? = null
     private val locationManager: LocationManager
         get() = getSystemService(LOCATION_SERVICE) as LocationManager
+
+    override fun onDestroy() {
+        mediaExecutor.shutdownNow()
+        super.onDestroy()
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -55,6 +69,98 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, MEDIA_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "getVideoThumbnail" -> {
+                        val path = call.argument<String>("path")
+                        val maxWidth = (call.argument<Int>("maxWidth") ?: 640).coerceIn(64, 1280)
+                        if (path.isNullOrEmpty()) {
+                            result.success(null)
+                        } else {
+                            extractVideoThumbnail(path, maxWidth, result)
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    private fun extractVideoThumbnail(
+        path: String,
+        maxWidth: Int,
+        result: MethodChannel.Result,
+    ) {
+        mediaExecutor.execute {
+            val payload = try {
+                val file = File(path)
+                if (!file.exists() || !file.isFile) {
+                    null
+                } else {
+                    val retriever = MediaMetadataRetriever()
+                    try {
+                        retriever.setDataSource(path)
+                        val durationMs = retriever
+                            .extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                            ?.toLongOrNull()
+                            ?.takeIf { it > 0L }
+
+                        val rawBitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                            retriever.getScaledFrameAtTime(
+                                0L,
+                                MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
+                                maxWidth,
+                                maxWidth,
+                            ) ?: retriever.getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                        } else {
+                            retriever.getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                        }
+
+                        val bytes = rawBitmap?.let { bitmap ->
+                            val scaled = scaleDownIfNeeded(bitmap, maxWidth)
+                            try {
+                                val out = ByteArrayOutputStream()
+                                scaled.compress(Bitmap.CompressFormat.JPEG, 80, out)
+                                out.toByteArray()
+                            } finally {
+                                if (scaled !== bitmap) scaled.recycle()
+                                bitmap.recycle()
+                            }
+                        }
+
+                        if (bytes == null && durationMs == null) {
+                            null
+                        } else {
+                            mapOf(
+                                "bytes" to bytes,
+                                "durationMs" to durationMs,
+                            )
+                        }
+                    } finally {
+                        try {
+                            retriever.release()
+                        } catch (_: Exception) {
+                        }
+                    }
+                }
+            } catch (_: Exception) {
+                null
+            }
+
+            mainHandler.post {
+                result.success(payload)
+            }
+        }
+    }
+
+    private fun scaleDownIfNeeded(bitmap: Bitmap, maxEdge: Int): Bitmap {
+        val largest = max(bitmap.width, bitmap.height)
+        if (largest <= maxEdge || largest <= 0) return bitmap
+        val ratio = maxEdge.toFloat() / largest.toFloat()
+        val width = (bitmap.width * ratio).roundToInt().coerceAtLeast(1)
+        val height = (bitmap.height * ratio).roundToInt().coerceAtLeast(1)
+        return Bitmap.createScaledBitmap(bitmap, width, height, true)
     }
 
     private fun openUrl(url: String?): Boolean {

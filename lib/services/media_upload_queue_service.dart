@@ -112,6 +112,8 @@ class PendingMediaSummary {
   final int failedCount;
   final String? activeFileName;
   final double? activeProgress;
+  final int? activeBytesSent;
+  final int? activeTotalBytes;
 
   const PendingMediaSummary({
     this.queuedCount = 0,
@@ -120,6 +122,8 @@ class PendingMediaSummary {
     this.failedCount = 0,
     this.activeFileName,
     this.activeProgress,
+    this.activeBytesSent,
+    this.activeTotalBytes,
   });
 
   int get pendingTotal => queuedCount + uploadingCount + pausedWifiCount;
@@ -201,6 +205,8 @@ abstract class MediaUploadStore {
   Future<PendingMediaSummary> readSummary({
     String? activeFileName,
     double? activeProgress,
+    int? activeBytesSent,
+    int? activeTotalBytes,
   });
 }
 
@@ -377,6 +383,8 @@ class PowerSyncMediaUploadStore implements MediaUploadStore {
   Future<PendingMediaSummary> readSummary({
     String? activeFileName,
     double? activeProgress,
+    int? activeBytesSent,
+    int? activeTotalBytes,
   }) async {
     final rows = await db.getAll(
       'SELECT status, COUNT(*) AS cnt FROM local_pending_uploads GROUP BY status',
@@ -405,6 +413,8 @@ class PowerSyncMediaUploadStore implements MediaUploadStore {
       failedCount: failed,
       activeFileName: uploading > 0 ? activeFileName : null,
       activeProgress: uploading > 0 ? activeProgress : null,
+      activeBytesSent: uploading > 0 ? activeBytesSent : null,
+      activeTotalBytes: uploading > 0 ? activeTotalBytes : null,
     );
   }
 }
@@ -765,12 +775,19 @@ class MediaUploadQueueWorker {
     };
   }
 
-  Future<void> _emitSummary({String? activeFileName, double? activeProgress}) async {
+  Future<void> _emitSummary({
+    String? activeFileName,
+    double? activeProgress,
+    int? activeBytesSent,
+    int? activeTotalBytes,
+  }) async {
     if (_stopped) return;
     try {
       _summary = await store.readSummary(
         activeFileName: activeFileName,
         activeProgress: activeProgress,
+        activeBytesSent: activeBytesSent,
+        activeTotalBytes: activeTotalBytes,
       );
       if (!_summaryController.isClosed) {
         _summaryController.add(_summary);
@@ -985,13 +1002,17 @@ class MediaUploadQueueWorker {
     }
 
     await store.updateStatus(item.attachmentId, MediaUploadStatus.uploading);
+    final initialBytesSent =
+        item.fileSize > 0 ? item.uploadedOffset.clamp(0, item.fileSize) : 0;
     final initialProgress =
-        item.fileSize > 0 && item.uploadedOffset > 0
-            ? min(1.0, item.uploadedOffset / item.fileSize)
+        item.fileSize > 0 && initialBytesSent > 0
+            ? min(1.0, initialBytesSent / item.fileSize)
             : 0.0;
     await _emitSummary(
       activeFileName: item.originalName,
       activeProgress: initialProgress,
+      activeBytesSent: initialBytesSent,
+      activeTotalBytes: item.fileSize > 0 ? item.fileSize : null,
     );
 
     try {
@@ -1340,6 +1361,8 @@ class MediaUploadQueueWorker {
           await _emitSummary(
             activeFileName: item.originalName,
             activeProgress: min(1.0, offset / fileSize),
+            activeBytesSent: offset.clamp(0, fileSize),
+            activeTotalBytes: fileSize,
           );
         }
       }
@@ -1375,6 +1398,7 @@ class MediaUploadQueueWorker {
 
       StreamingPutResult result;
       var refreshedFor401 = false;
+      var lastChunkProgress = fileSize > 0 ? min(1.0, offset / fileSize) : 0.0;
       while (true) {
         try {
           result = await _sendManagedPut(
@@ -1384,6 +1408,23 @@ class MediaUploadQueueWorker {
             start: offset,
             end: end,
             contentType: 'application/offset+octet-stream',
+            onBytesSent: fileSize > 0
+                ? (sentInChunk) {
+                    final totalSent = min(fileSize, offset + sentInChunk);
+                    final progress = min(0.99, totalSent / fileSize);
+                    if (progress - lastChunkProgress >= 0.01) {
+                      lastChunkProgress = progress;
+                      unawaited(
+                        _emitSummary(
+                          activeFileName: item.originalName,
+                          activeProgress: progress,
+                          activeBytesSent: totalSent,
+                          activeTotalBytes: fileSize,
+                        ),
+                      );
+                    }
+                  }
+                : null,
             headers: {
               ...await _tusBaseHeaders(),
               'Upload-Offset': offset.toString(),
@@ -1417,6 +1458,8 @@ class MediaUploadQueueWorker {
         await _emitSummary(
           activeFileName: item.originalName,
           activeProgress: fileSize > 0 ? min(1.0, offset / fileSize) : 1.0,
+          activeBytesSent: fileSize > 0 ? offset.clamp(0, fileSize) : null,
+          activeTotalBytes: fileSize > 0 ? fileSize : null,
         );
         continue;
       }
@@ -1502,6 +1545,8 @@ class MediaUploadQueueWorker {
                   _emitSummary(
                     activeFileName: item.originalName,
                     activeProgress: progress,
+                    activeBytesSent: sent.clamp(0, fileSize),
+                    activeTotalBytes: fileSize,
                   ),
                 );
               }
@@ -1509,7 +1554,12 @@ class MediaUploadQueueWorker {
           : null,
     );
     _checkPutStatus(result.statusCode, item.originalName);
-    await _emitSummary(activeFileName: item.originalName, activeProgress: 0.95);
+    await _emitSummary(
+      activeFileName: item.originalName,
+      activeProgress: 0.95,
+      activeBytesSent: fileSize > 0 ? fileSize : null,
+      activeTotalBytes: fileSize > 0 ? fileSize : null,
+    );
     await _ensureFreshTokenOrThrow();
     await gateway.confirmUpload(attachmentId: item.attachmentId);
   }
@@ -1551,13 +1601,16 @@ class MediaUploadQueueWorker {
     var doneBytes = completed.keys.fold<int>(0, (sum, n) => sum + partLength(n));
     var lastReportedProgress = progressFor(doneBytes);
     void reportPartBytes(int sentInPart) {
-      final progress = progressFor(doneBytes + sentInPart);
+      final totalSent = min(fileSize, doneBytes + sentInPart);
+      final progress = progressFor(totalSent);
       if (progress - lastReportedProgress >= 0.01) {
         lastReportedProgress = progress;
         unawaited(
           _emitSummary(
             activeFileName: item.originalName,
             activeProgress: progress,
+            activeBytesSent: totalSent,
+            activeTotalBytes: fileSize > 0 ? fileSize : null,
           ),
         );
       }
@@ -1566,6 +1619,8 @@ class MediaUploadQueueWorker {
     await _emitSummary(
       activeFileName: item.originalName,
       activeProgress: lastReportedProgress,
+      activeBytesSent: doneBytes.clamp(0, fileSize),
+      activeTotalBytes: fileSize > 0 ? fileSize : null,
     );
 
     final remaining = <int>[
@@ -1654,6 +1709,8 @@ class MediaUploadQueueWorker {
         await _emitSummary(
           activeFileName: item.originalName,
           activeProgress: lastReportedProgress,
+          activeBytesSent: doneBytes.clamp(0, fileSize),
+          activeTotalBytes: fileSize > 0 ? fileSize : null,
         );
       }
     }
@@ -1815,7 +1872,10 @@ class MediaUploadQueueService {
       }
 
       final ext = extensionOf(fileName.isNotEmpty ? fileName : filePath);
-      final contentType = mimeForExtension(ext);
+      final storedContentType = value['content_type'] as String?;
+      final contentType = isSupportedContentType(storedContentType)
+          ? storedContentType!.split(';').first.trim().toLowerCase()
+          : mimeForExtension(ext);
       if (contentType == null) {
         if (throwOnUnsupported) {
           throw Exception('Unsupported file type (.$ext)');

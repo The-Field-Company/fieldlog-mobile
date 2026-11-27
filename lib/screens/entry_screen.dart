@@ -193,6 +193,7 @@ class _EntryScreenState extends State<EntryScreen> {
                 ],
               ),
             ),
+            const UploadProgressBar(),
 
             // Scrollable content
             Expanded(

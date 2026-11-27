@@ -50,11 +50,11 @@
 		<key>NSLocationAlwaysUsageDescription</key>
 		<string>FieldLog needs your location to tag field observations with GPS coordinates.</string>
 		<key>NSCameraUsageDescription</key>
-		<string>FieldLog needs camera access to capture photos for field observations.</string>
+		<string>FieldLog needs camera access to capture photos and videos for field observations.</string>
 		<key>NSPhotoLibraryUsageDescription</key>
-		<string>FieldLog needs photo library access to attach images to field observations.</string>
+		<string>FieldLog needs photo library access to attach photos and videos to field observations.</string>
 		<key>NSMicrophoneUsageDescription</key>
-		<string>FieldLog needs microphone access to record audio for field observations.</string>
+		<string>FieldLog needs microphone access to record audio and video for field observations.</string>
 		<key>UIStatusBarHidden</key>
 		<false/>
 	</dict>
