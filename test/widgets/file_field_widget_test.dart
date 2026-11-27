@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fieldlog_mobile/services/audio_service.dart';
 import 'package:fieldlog_mobile/services/preferences_service.dart';
+import 'package:fieldlog_mobile/services/video_thumbnail_service.dart';
 import 'package:fieldlog_mobile/utils/attachment_accepts.dart';
 import 'package:fieldlog_mobile/widgets/field_widgets/file_field_widget.dart';
 import 'package:fieldlog_mobile/widgets/formkit_renderer.dart';
@@ -126,6 +128,8 @@ void main() {
 
   tearDown(() async {
     AudioService.backend = null;
+    VideoThumbnailService.loaderOverride = null;
+    VideoThumbnailService.clearCache();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(pathProviderChannel, null);
     if (await tempDir.exists()) {
@@ -202,6 +206,157 @@ void main() {
       expect(find.text('Photo Library'), findsOneWidget);
       expect(find.text('Record Audio'), findsOneWidget);
       expect(find.text('Choose Audio File'), findsOneWidget);
+    });
+
+    testWidgets('video accepts shows video-only prompt and options', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        wrap(
+          FileFieldWidget(
+            label: 'Behavior Clip',
+            accepts: 'video',
+            onChanged: (_) {},
+          ),
+        ),
+      );
+
+      expect(find.text('Add video'), findsOneWidget);
+
+      await tester.tap(find.text('Add video'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Record Video'), findsOneWidget);
+      expect(find.text('Video Library'), findsOneWidget);
+      expect(find.text('Camera'), findsNothing);
+      expect(find.text('Record Audio'), findsNothing);
+    });
+
+    testWidgets('image,audio,video accepts shows all media options', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        wrap(
+          FileFieldWidget(
+            label: 'All Media',
+            accepts: 'image,audio,video',
+            onChanged: (_) {},
+          ),
+        ),
+      );
+
+      expect(find.text('Add photo, audio, or video'), findsOneWidget);
+
+      await tester.tap(find.text('Add photo, audio, or video'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Camera'), findsOneWidget);
+      expect(find.text('Record Audio'), findsOneWidget);
+      expect(find.text('Record Video'), findsOneWidget);
+      expect(find.text('Video Library'), findsOneWidget);
+    });
+
+    testWidgets('restores initial video value and supports removal', (
+      tester,
+    ) async {
+      Map<String, dynamic>? emitted = {'sentinel': true};
+      final clip = File('${tempDir.path}/sighting.mp4')
+        ..writeAsBytesSync(List<int>.filled(4096, 3));
+
+      await tester.pumpWidget(
+        wrap(
+          FileFieldWidget(
+            label: 'Behavior Clip',
+            accepts: 'video',
+            initialValue: {
+              'file_path': clip.path,
+              'file_name': 'sighting.mp4',
+              'original_name': 'elephant_crossing.mp4',
+              'file_size': 4096,
+              'content_type': 'video/mp4',
+            },
+            onChanged: (v) => emitted = v,
+          ),
+        ),
+      );
+
+      expect(find.text('elephant_crossing.mp4'), findsOneWidget);
+      expect(find.text('Video · 4 KB'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Remove video'));
+      await tester.pumpAndSettle();
+
+      expect(emitted, isNull);
+      expect(find.text('Add video'), findsOneWidget);
+    });
+
+    testWidgets('large video shows inline note instead of a snackbar', (
+      tester,
+    ) async {
+      final clip = File('${tempDir.path}/big.mp4')
+        ..writeAsBytesSync(List<int>.filled(1024, 3));
+      const note = 'Large video · uploads in the background after you submit';
+
+      Widget field(int size) => wrap(
+        FileFieldWidget(
+          key: ValueKey(size),
+          label: 'Behavior Clip',
+          accepts: 'video',
+          initialValue: {
+            'file_path': clip.path,
+            'file_name': 'big.mp4',
+            'original_name': 'big.mp4',
+            'file_size': size,
+            'content_type': 'video/mp4',
+          },
+          onChanged: (_) {},
+        ),
+      );
+
+      await tester.pumpWidget(field(30 * 1024 * 1024));
+      expect(find.text(note), findsOneWidget);
+      expect(find.byType(SnackBar), findsNothing);
+
+      await tester.pumpWidget(field(10 * 1024 * 1024));
+      expect(find.text(note), findsNothing);
+    });
+
+    testWidgets('video preview displays extracted thumbnail frame and duration', (
+      tester,
+    ) async {
+      // Valid 1x1 transparent PNG
+      final pngBytes = base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
+      );
+      VideoThumbnailService.loaderOverride = (path, {maxWidth = 640}) async {
+        return VideoThumbnailData(bytes: pngBytes, durationMs: 27000);
+      };
+
+      final clip = File('${tempDir.path}/crossing.mp4')
+        ..writeAsBytesSync(List<int>.filled(8192, 4));
+
+      await tester.pumpWidget(
+        wrap(
+          FileFieldWidget(
+            label: 'Crossing Clip',
+            accepts: 'video',
+            initialValue: {
+              'file_path': clip.path,
+              'file_name': 'crossing.mp4',
+              'original_name': 'mopane_drift.mp4',
+              'file_size': 8192,
+              'content_type': 'video/mp4',
+            },
+            onChanged: (_) {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byType(Image), findsOneWidget);
+      expect(find.text('0:27'), findsOneWidget);
+      expect(find.text('mopane_drift.mp4'), findsOneWidget);
+      expect(find.text('Video · 8 KB'), findsOneWidget);
     });
   });
 

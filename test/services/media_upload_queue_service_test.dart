@@ -172,6 +172,8 @@ class _InMemoryUploadStore implements MediaUploadStore {
   Future<PendingMediaSummary> readSummary({
     String? activeFileName,
     double? activeProgress,
+    int? activeBytesSent,
+    int? activeTotalBytes,
   }) async {
     var queued = 0;
     var uploading = 0;
@@ -196,6 +198,8 @@ class _InMemoryUploadStore implements MediaUploadStore {
       failedCount: failed,
       activeFileName: uploading > 0 ? activeFileName : null,
       activeProgress: uploading > 0 ? activeProgress : null,
+      activeBytesSent: uploading > 0 ? activeBytesSent : null,
+      activeTotalBytes: uploading > 0 ? activeTotalBytes : null,
     );
   }
 }
@@ -1818,4 +1822,198 @@ void main() {
       expect(worker.currentChunkSize(), 256 * 1024);
     },
   );
+
+  test(
+    'extractSubmissionMedia honors video/webm content_type and falls back on unsupported values',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('fieldlog_video_extract_');
+      addTearDown(() async {
+        if (await dir.exists()) await dir.delete(recursive: true);
+      });
+
+      final videoWebm = File('${dir.path}/clip.webm')
+        ..writeAsBytesSync(List<int>.filled(4096, 7));
+      final audioWebm = File('${dir.path}/voice.webm')
+        ..writeAsBytesSync(List<int>.filled(2048, 3));
+      final badMimeMp4 = File('${dir.path}/safari.mp4')
+        ..writeAsBytesSync(List<int>.filled(1024, 9));
+
+      final payload = <String, dynamic>{
+        'video_clip': {
+          'file_path': videoWebm.path,
+          'file_name': 'clip.webm',
+          'original_name': 'behavior.webm',
+          'file_size': 4096,
+          'content_type': 'video/webm',
+        },
+        'voice_note': {
+          'file_path': audioWebm.path,
+          'file_name': 'voice.webm',
+          'original_name': 'voice.webm',
+          'file_size': 2048,
+        },
+        'fallback_clip': {
+          'file_path': badMimeMp4.path,
+          'file_name': 'safari.mp4',
+          'original_name': 'safari.mp4',
+          'file_size': 1024,
+          'content_type': 'video/x-msvideo',
+        },
+      };
+
+      final items = await MediaUploadQueueService.extractSubmissionMedia(
+        payload,
+        submissionId: 'sub-video-1',
+        sessionId: 7,
+      );
+
+      final byField = {for (final item in items) item.fieldKey: item};
+      expect(byField['video_clip']?.contentType, 'video/webm');
+      expect(byField['voice_note']?.contentType, 'audio/webm');
+      expect(byField['fallback_clip']?.contentType, 'video/mp4');
+
+      expect((payload['video_clip'] as List).first['type'], 'video/webm');
+      expect((payload['voice_note'] as List).first['type'], 'audio/webm');
+      expect((payload['fallback_clip'] as List).first['type'], 'video/mp4');
+    },
+  );
+
+  test(
+    'tus video upload reports activeBytesSent and activeTotalBytes in summary stream',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('fieldlog_tus_video_');
+      addTearDown(() async {
+        if (await dir.exists()) await dir.delete(recursive: true);
+      });
+
+      const fileSize = 512 * 1024;
+      final videoFile = File('${dir.path}/clip.mp4')
+        ..writeAsBytesSync(List<int>.filled(fileSize, 42));
+
+      final store = _InMemoryUploadStore();
+      var serverOffset = 0;
+      String? confirmedId;
+      final summaries = <PendingMediaSummary>[];
+
+      final worker = MediaUploadQueueWorker(
+        store: store,
+        gateway: _FakeGateway(
+          tusEndpoint: 'https://example.test/tus/',
+          onInit: (_, _) async => throw StateError('should use tus'),
+          onPartUrls: (_, _) async => const [],
+          onConfirm: (id, _) async => confirmedId = id,
+          onPut: (req) async {
+            if (req.method == 'POST') {
+              return http.StreamedResponse(
+                const Stream.empty(),
+                201,
+                headers: {
+                  'tus-resumable': '1.0.0',
+                  'location': 'https://example.test/tus/video-1',
+                },
+              );
+            }
+            if (req.method == 'PATCH') {
+              final bytes = await req.finalize().toBytes();
+              serverOffset += bytes.length;
+              return http.StreamedResponse(
+                const Stream.empty(),
+                204,
+                headers: {
+                  'tus-resumable': '1.0.0',
+                  'upload-offset': '$serverOffset',
+                },
+              );
+            }
+            return http.StreamedResponse(const Stream.empty(), 405);
+          },
+        ),
+        readConnectivity: () => const ConnectivityState(isOnline: true, isOnWifi: false),
+        readPolicy: () => MediaUploadNetworkPolicy.anyNetwork,
+        readLowCoverageMode: () => true,
+      );
+      addTearDown(worker.dispose);
+
+      final sub = worker.summaryStream.listen(summaries.add);
+      addTearDown(sub.cancel);
+
+      await worker.enqueue(
+        PendingUploadItem(
+          attachmentId: 'att-video-1',
+          submissionId: 'sub-video-1',
+          sessionId: 1,
+          fieldKey: 'clip',
+          localPath: videoFile.path,
+          originalName: 'elephant.mp4',
+          contentType: 'video/mp4',
+          fileSize: fileSize,
+          s3UploadId: '',
+          partSize: 0,
+          completedPartsJson: '[]',
+          status: MediaUploadStatus.queued,
+          retryCount: 0,
+          lastError: '',
+          createdAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+        triggerUpload: false,
+      );
+
+      await worker.drainOnce();
+
+      expect(confirmedId, 'att-video-1');
+      expect(serverOffset, fileSize);
+      expect(
+        summaries.any(
+          (s) =>
+              s.isUploading &&
+              s.activeFileName == 'elephant.mp4' &&
+              s.activeTotalBytes == fileSize &&
+              (s.activeBytesSent ?? 0) > 0,
+        ),
+        isTrue,
+      );
+    },
+  );
+  test('sweeps old unreferenced media files and keeps everything else', () async {
+    final now = DateTime(2026, 11, 27, 12);
+    final old = now.subtract(const Duration(hours: 3));
+    File make(String name, DateTime modified) {
+      final f = File('${tempDir.path}/$name')..writeAsBytesSync([1, 2, 3]);
+      f.setLastModifiedSync(modified);
+      return f;
+    }
+
+    final orphanVideo = make('0da5ea9d-af73-43da-8fc2-b8faabb9090f.mp4', old);
+    final orphanAudio = make('19662153-1ac6-46f0-884e-fcdc0d1a1f70.m4a', old);
+    final queued = make('68a5e290-1e1f-457f-959d-ae5e929ff24e.mov', old);
+    final fresh = make('73defa15-92fb-4c89-9eb1-906f55e20dec.webm', now);
+    final database = make('fieldlog.db', old);
+    final otherName = make('clip.mp4', old);
+    final otherType = make('5d0b8a3e-2c1f-4a8e-9b7d-1e2f3a4b5c6d.txt', old);
+
+    final deleted = await sweepOrphanLocalMedia(
+      directory: tempDir,
+      referencedPaths: [
+        '/var/mobile/Containers/Data/Application/OLD-CONTAINER/Documents/68a5e290-1e1f-457f-959d-ae5e929ff24e.mov',
+      ],
+      now: now,
+    );
+
+    expect(deleted, 2);
+    expect(orphanVideo.existsSync(), isFalse);
+    expect(orphanAudio.existsSync(), isFalse);
+    expect(queued.existsSync(), isTrue);
+    expect(fresh.existsSync(), isTrue);
+    expect(database.existsSync(), isTrue);
+    expect(otherName.existsSync(), isTrue);
+    expect(otherType.existsSync(), isTrue);
+  });
+
+  test('sweep is a no-op when the directory is missing', () async {
+    final missing = Directory('${tempDir.path}/missing');
+    expect(
+      await sweepOrphanLocalMedia(directory: missing, referencedPaths: const []),
+      0,
+    );
+  });
 }

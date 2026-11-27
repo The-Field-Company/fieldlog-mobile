@@ -459,6 +459,7 @@ class _FormScreenState extends State<FormScreen> {
       ),
       body: Column(
         children: [
+          const UploadProgressBar(),
           _buildLocationIndicator(),
           Expanded(child: _buildRenderer()),
         ],

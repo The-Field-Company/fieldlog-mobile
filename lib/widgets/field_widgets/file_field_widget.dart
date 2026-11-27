@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:fieldlog_mobile/app_typography.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
@@ -11,6 +12,7 @@ import '../../theme/app_colors.dart';
 import '../../utils/attachment_accepts.dart';
 import 'audio_preview_card.dart';
 import 'audio_recorder_card.dart';
+import 'video_preview_card.dart';
 
 class FileFieldWidget extends StatefulWidget {
   final String label;
@@ -52,7 +54,7 @@ class _FileFieldWidgetState extends State<FileFieldWidget>
   String? _originalName;
   int? _fileSize;
   int _audioDurationMs = 0;
-  bool _isAudio = false;
+  AttachmentKind _attachedKind = AttachmentKind.image;
   bool _isRecording = false;
   bool _isBusy = false;
   String? _recordingFileId;
@@ -61,6 +63,9 @@ class _FileFieldWidgetState extends State<FileFieldWidget>
   Set<AttachmentKind> get _acceptedKinds => parseAcceptedKinds(widget.accepts);
   bool get _allowsImage => _acceptedKinds.contains(AttachmentKind.image);
   bool get _allowsAudio => _acceptedKinds.contains(AttachmentKind.audio);
+  bool get _allowsVideo => _acceptedKinds.contains(AttachmentKind.video);
+
+  static const int _largeVideoBytes = 25 * 1024 * 1024;
 
   @override
   bool get wantKeepAlive => _isRecording || _file != null;
@@ -84,7 +89,10 @@ class _FileFieldWidgetState extends State<FileFieldWidget>
         (initial['file_name'] as String?) ??
         path.split('/').last;
     _fileSize = (initial['file_size'] as num?)?.toInt();
-    _isAudio = isAudioPath(path);
+    _attachedKind = kindForAttachment(
+      contentType: initial['content_type'] as String?,
+      pathOrName: path,
+    );
   }
 
   void _showSnackBar(
@@ -178,7 +186,7 @@ class _FileFieldWidgetState extends State<FileFieldWidget>
         _originalName = originalName;
         _fileSize = bytes;
         _audioDurationMs = 0;
-        _isAudio = false;
+        _attachedKind = AttachmentKind.image;
       });
       _clearFieldErrorIfValid(saved);
       updateKeepAlive();
@@ -191,7 +199,117 @@ class _FileFieldWidgetState extends State<FileFieldWidget>
         'file_name': '$id.$ext',
         'original_name': originalName,
         'file_size': bytes,
+        'content_type': mimeForExtension(ext),
       });
+    } finally {
+      _isBusy = false;
+    }
+  }
+
+  Future<void> _pickVideo(ImageSource source) async {
+    if (_isBusy) return;
+    _isBusy = true;
+    File? copied;
+    try {
+      await AudioService.stopPlayback(ownerId: _ownerId);
+
+      final picked = await _picker.pickVideo(source: source);
+      if (picked == null) return;
+
+      final ext = extensionOf(picked.path).isNotEmpty
+          ? extensionOf(picked.path)
+          : extensionOf(picked.name);
+      if (!videoExtensions.contains(ext)) {
+        _showSnackBar(
+          'Unsupported video format${ext.isNotEmpty ? ' (.$ext)' : ''}. '
+          'Supported: MP4, MOV, WEBM.',
+        );
+        return;
+      }
+
+      final sourceFile = File(picked.path);
+      final bytes = await sourceFile.length();
+      if (bytes == 0) {
+        _showSnackBar('Selected video file is empty.');
+        return;
+      }
+      if (bytes > maxVideoBytes) {
+        _showSnackBar(
+          'Video too large (max ${formatMaxSizeForKind(AttachmentKind.video)}).',
+        );
+        return;
+      }
+
+      final dir = await getApplicationDocumentsDirectory();
+      final id = const Uuid().v4();
+      final targetPath = '${dir.path}/$id.$ext';
+      final tempDir = await getTemporaryDirectory();
+      final isPickedTempCopy = sourceFile.path.startsWith(tempDir.path);
+      File saved;
+      if (isPickedTempCopy) {
+        try {
+          saved = await sourceFile.rename(targetPath);
+        } on FileSystemException {
+          saved = await sourceFile.copy(targetPath);
+          await _deleteLocalFile(sourceFile);
+        }
+      } else {
+        saved = await sourceFile.copy(targetPath);
+      }
+      copied = saved;
+
+      final previous = _file;
+      final originalName = picked.name.isNotEmpty ? picked.name : '$id.$ext';
+      if (!mounted) {
+        await _deleteLocalFile(saved);
+        copied = null;
+        return;
+      }
+
+      setState(() {
+        _file = saved;
+        _originalName = originalName;
+        _fileSize = bytes;
+        _audioDurationMs = 0;
+        _attachedKind = AttachmentKind.video;
+      });
+      copied = null;
+      _clearFieldErrorIfValid(saved);
+      updateKeepAlive();
+      if (previous != null && previous.path != saved.path) {
+        await _deleteLocalFile(previous);
+      }
+
+      widget.onChanged({
+        'file_path': saved.path,
+        'file_name': '$id.$ext',
+        'original_name': originalName,
+        'file_size': bytes,
+        'content_type': mimeForExtension(
+          ext,
+          preferredKind: AttachmentKind.video,
+        ),
+      });
+    } on PlatformException catch (e) {
+      await _deleteLocalFile(copied);
+      final isPermission =
+          e.code.toLowerCase().contains('denied') ||
+          e.code.toLowerCase().contains('permission') ||
+          (e.message?.toLowerCase().contains('permission') ?? false);
+      _showSnackBar(
+        isPermission
+            ? 'Camera or photo library permission is required to attach a video.'
+            : 'Could not open video picker. Please try again.',
+        action: isPermission
+            ? SnackBarAction(
+                label: 'Settings',
+                onPressed: AudioService.openAppSettings,
+              )
+            : null,
+      );
+    } catch (_) {
+      await _deleteLocalFile(copied);
+      _showSnackBar('Could not load the selected video. Please try again.');
     } finally {
       _isBusy = false;
     }
@@ -266,7 +384,7 @@ class _FileFieldWidgetState extends State<FileFieldWidget>
         _originalName = picked!.name;
         _fileSize = bytes;
         _audioDurationMs = 0;
-        _isAudio = true;
+        _attachedKind = AttachmentKind.audio;
       });
       _clearFieldErrorIfValid(saved);
       updateKeepAlive();
@@ -279,6 +397,10 @@ class _FileFieldWidgetState extends State<FileFieldWidget>
         'file_name': '$id.$ext',
         'original_name': picked.name,
         'file_size': bytes,
+        'content_type': mimeForExtension(
+          ext,
+          preferredKind: AttachmentKind.audio,
+        ),
       });
     } finally {
       _isBusy = false;
@@ -377,7 +499,7 @@ class _FileFieldWidgetState extends State<FileFieldWidget>
       _originalName = displayName;
       _fileSize = recorded.size;
       _audioDurationMs = recorded.durationMs;
-      _isAudio = true;
+      _attachedKind = AttachmentKind.audio;
     });
     _clearFieldErrorIfValid(saved);
     updateKeepAlive();
@@ -390,6 +512,7 @@ class _FileFieldWidgetState extends State<FileFieldWidget>
       'file_name': '$fileId.m4a',
       'original_name': displayName,
       'file_size': recorded.size,
+      'content_type': 'audio/mp4',
     });
   }
 
@@ -411,7 +534,7 @@ class _FileFieldWidgetState extends State<FileFieldWidget>
       _originalName = null;
       _fileSize = null;
       _audioDurationMs = 0;
-      _isAudio = false;
+      _attachedKind = AttachmentKind.image;
     });
     updateKeepAlive();
     widget.onChanged(null);
@@ -483,12 +606,13 @@ class _FileFieldWidgetState extends State<FileFieldWidget>
     if (_isRecording || _isBusy) return;
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       backgroundColor: AppColors.primaryBg,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
       builder: (ctx) => SafeArea(
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(8, 10, 8, 12),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -534,6 +658,22 @@ class _FileFieldWidgetState extends State<FileFieldWidget>
                   onTap: _pickAudioFile,
                 ),
               ],
+              if (_allowsVideo) ...[
+                _buildSheetOption(
+                  sheetContext: ctx,
+                  icon: Icons.videocam_outlined,
+                  title: 'Record Video',
+                  subtitle: 'Capture a video with your camera',
+                  onTap: () => _pickVideo(ImageSource.camera),
+                ),
+                _buildSheetOption(
+                  sheetContext: ctx,
+                  icon: Icons.video_library_outlined,
+                  title: 'Video Library',
+                  subtitle: 'MP4, MOV, WEBM up to 1 GB',
+                  onTap: () => _pickVideo(ImageSource.gallery),
+                ),
+              ],
             ],
           ),
         ),
@@ -542,25 +682,70 @@ class _FileFieldWidgetState extends State<FileFieldWidget>
   }
 
   IconData get _emptyIcon {
-    if (_allowsImage && _allowsAudio) return Icons.add_rounded;
+    if (_acceptedKinds.length > 1) return Icons.add_rounded;
     if (_allowsAudio) return Icons.mic_none_rounded;
+    if (_allowsVideo) return Icons.videocam_outlined;
     return Icons.photo_camera_outlined;
   }
 
   String get _emptyTitle {
-    if (_allowsImage && _allowsAudio) return 'Add photo or audio';
-    if (_allowsAudio) return 'Add audio';
-    return 'Add photo';
+    if (_acceptedKinds.length == 1) {
+      if (_allowsAudio) return 'Add audio';
+      if (_allowsVideo) return 'Add video';
+      return 'Add photo';
+    }
+    final parts = <String>[
+      if (_allowsImage) 'photo',
+      if (_allowsAudio) 'audio',
+      if (_allowsVideo) 'video',
+    ];
+    if (parts.length == 2) return 'Add ${parts[0]} or ${parts[1]}';
+    return 'Add ${parts.sublist(0, parts.length - 1).join(', ')}, or ${parts.last}';
   }
 
   String get _emptySubtitle {
-    if (_allowsImage && _allowsAudio) {
-      return 'Take a photo, record audio, or choose a file';
+    if (_acceptedKinds.length == 1) {
+      if (_allowsAudio) {
+        return 'Record live or choose an audio file · up to 50 MB';
+      }
+      if (_allowsVideo) {
+        return 'Record a clip or choose from library · up to 1 GB';
+      }
+      return 'Take a photo or choose from library · up to 10 MB';
     }
-    if (_allowsAudio) {
-      return 'Record live or choose an audio file · up to 50 MB';
-    }
-    return 'Take a photo or choose from library · up to 10 MB';
+    final maxLabel = _allowsVideo ? '1 GB' : '50 MB';
+    return 'Capture or choose a file · up to $maxLabel';
+  }
+
+  Widget _buildLargeVideoNote() {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.dividerColor),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.info_outline_rounded,
+            size: 16,
+            color: AppColors.textSecondary,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Large video · uploads in the background after you submit',
+              style: AppTypography.textStyle(
+                fontSize: 12,
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildEmptyBox() {
@@ -696,7 +881,7 @@ class _FileFieldWidgetState extends State<FileFieldWidget>
                 )
               else if (_file == null)
                 _buildEmptyBox()
-              else if (_isAudio)
+              else if (_attachedKind == AttachmentKind.audio)
                 AudioPreviewCard(
                   ownerId: _ownerId,
                   filePath: _file!.path,
@@ -706,8 +891,19 @@ class _FileFieldWidgetState extends State<FileFieldWidget>
                   onRemove: _remove,
                   onError: _showSnackBar,
                 )
+              else if (_attachedKind == AttachmentKind.video)
+                VideoPreviewCard(
+                  filePath: _file!.path,
+                  displayName: _originalName ?? 'Video clip',
+                  fileSize: _fileSize,
+                  onRemove: _remove,
+                )
               else
                 _buildImagePreview(),
+              if (_file != null &&
+                  _attachedKind == AttachmentKind.video &&
+                  (_fileSize ?? 0) > _largeVideoBytes)
+                _buildLargeVideoNote(),
               if (state.hasError)
                 Padding(
                   padding: const EdgeInsets.only(top: 4),
