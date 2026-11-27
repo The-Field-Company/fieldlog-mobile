@@ -1974,4 +1974,46 @@ void main() {
       );
     },
   );
+  test('sweeps old unreferenced media files and keeps everything else', () async {
+    final now = DateTime(2026, 11, 27, 12);
+    final old = now.subtract(const Duration(hours: 3));
+    File make(String name, DateTime modified) {
+      final f = File('${tempDir.path}/$name')..writeAsBytesSync([1, 2, 3]);
+      f.setLastModifiedSync(modified);
+      return f;
+    }
+
+    final orphanVideo = make('0da5ea9d-af73-43da-8fc2-b8faabb9090f.mp4', old);
+    final orphanAudio = make('19662153-1ac6-46f0-884e-fcdc0d1a1f70.m4a', old);
+    final queued = make('68a5e290-1e1f-457f-959d-ae5e929ff24e.mov', old);
+    final fresh = make('73defa15-92fb-4c89-9eb1-906f55e20dec.webm', now);
+    final database = make('fieldlog.db', old);
+    final otherName = make('clip.mp4', old);
+    final otherType = make('5d0b8a3e-2c1f-4a8e-9b7d-1e2f3a4b5c6d.txt', old);
+
+    final deleted = await sweepOrphanLocalMedia(
+      directory: tempDir,
+      referencedPaths: [
+        '/var/mobile/Containers/Data/Application/OLD-CONTAINER/Documents/68a5e290-1e1f-457f-959d-ae5e929ff24e.mov',
+      ],
+      now: now,
+    );
+
+    expect(deleted, 2);
+    expect(orphanVideo.existsSync(), isFalse);
+    expect(orphanAudio.existsSync(), isFalse);
+    expect(queued.existsSync(), isTrue);
+    expect(fresh.existsSync(), isTrue);
+    expect(database.existsSync(), isTrue);
+    expect(otherName.existsSync(), isTrue);
+    expect(otherType.existsSync(), isTrue);
+  });
+
+  test('sweep is a no-op when the directory is missing', () async {
+    final missing = Directory('${tempDir.path}/missing');
+    expect(
+      await sweepOrphanLocalMedia(directory: missing, referencedPaths: const []),
+      0,
+    );
+  });
 }

@@ -5,6 +5,7 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
 import 'package:powersync/powersync.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:uuid/uuid.dart';
@@ -1800,6 +1801,41 @@ class MediaUploadQueueWorker {
   }
 }
 
+final RegExp _localMediaName = RegExp(
+  r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.([a-z0-9]+)$',
+  caseSensitive: false,
+);
+
+const Duration orphanMediaMinAge = Duration(hours: 1);
+
+String _baseName(String path) => path.split(Platform.pathSeparator).last;
+
+@visibleForTesting
+Future<int> sweepOrphanLocalMedia({
+  required Directory directory,
+  required Iterable<String> referencedPaths,
+  DateTime? now,
+  Duration minAge = orphanMediaMinAge,
+}) async {
+  if (!await directory.exists()) return 0;
+  final referenced = {for (final p in referencedPaths) _baseName(p)};
+  final cutoff = (now ?? DateTime.now()).subtract(minAge);
+  var deleted = 0;
+  await for (final entity in directory.list(followLinks: false)) {
+    if (entity is! File) continue;
+    final name = _baseName(entity.path);
+    final match = _localMediaName.firstMatch(name);
+    if (match == null || kindForExtension(match.group(1)!) == null) continue;
+    if (referenced.contains(name)) continue;
+    try {
+      if ((await entity.lastModified()).isAfter(cutoff)) continue;
+      await entity.delete();
+      deleted++;
+    } catch (_) {}
+  }
+  return deleted;
+}
+
 class MediaUploadQueueService {
   static MediaUploadQueueWorker? _worker;
   static StreamSubscription<ConnectivityState>? _connectivitySub;
@@ -1818,6 +1854,7 @@ class MediaUploadQueueService {
 
     final store = PowerSyncMediaUploadStore(db);
     await store.resetStuckUploading();
+    unawaited(_sweepOrphanMedia(store));
 
     final worker = MediaUploadQueueWorker(
       store: store,
@@ -1994,6 +2031,17 @@ class MediaUploadQueueService {
       triggerUpload: triggerUpload,
       ifAbsent: ifAbsent,
     );
+  }
+
+  static Future<void> _sweepOrphanMedia(MediaUploadStore store) async {
+    try {
+      final directory = await getApplicationDocumentsDirectory();
+      final referenced = await store.listAllLocalPaths();
+      await sweepOrphanLocalMedia(
+        directory: directory,
+        referencedPaths: referenced,
+      );
+    } catch (_) {}
   }
 
   static Future<void> cleanupLocalFilesForLogout(PowerSyncDatabase db) async {
