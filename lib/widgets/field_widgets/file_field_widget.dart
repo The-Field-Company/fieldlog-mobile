@@ -65,6 +65,8 @@ class _FileFieldWidgetState extends State<FileFieldWidget>
   bool get _allowsAudio => _acceptedKinds.contains(AttachmentKind.audio);
   bool get _allowsVideo => _acceptedKinds.contains(AttachmentKind.video);
 
+  static const int _largeVideoBytes = 25 * 1024 * 1024;
+
   @override
   bool get wantKeepAlive => _isRecording || _file != null;
 
@@ -255,13 +257,6 @@ class _FileFieldWidgetState extends State<FileFieldWidget>
         saved = await sourceFile.copy(targetPath);
       }
       copied = saved;
-      final mb = bytes / (1024 * 1024);
-      if (mb > 25) {
-        _showSnackBar(
-          'Large video (${mb.toStringAsFixed(1)} MB) — upload may be slow',
-          backgroundColor: Colors.orange.shade700,
-        );
-      }
 
       final previous = _file;
       final originalName = picked.name.isNotEmpty ? picked.name : '$id.$ext';
@@ -722,6 +717,37 @@ class _FileFieldWidgetState extends State<FileFieldWidget>
     return 'Capture or choose a file · up to $maxLabel';
   }
 
+  Widget _buildLargeVideoNote() {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.dividerColor),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.info_outline_rounded,
+            size: 16,
+            color: AppColors.textSecondary,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Large video · uploads in the background after you submit',
+              style: AppTypography.textStyle(
+                fontSize: 12,
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildEmptyBox() {
     return InkWell(
       onTap: _showPicker,
@@ -874,6 +900,10 @@ class _FileFieldWidgetState extends State<FileFieldWidget>
                 )
               else
                 _buildImagePreview(),
+              if (_file != null &&
+                  _attachedKind == AttachmentKind.video &&
+                  (_fileSize ?? 0) > _largeVideoBytes)
+                _buildLargeVideoNote(),
               if (state.hasError)
                 Padding(
                   padding: const EdgeInsets.only(top: 4),

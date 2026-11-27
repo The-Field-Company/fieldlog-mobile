@@ -259,6 +259,7 @@ class _VideoPlayerDialog extends StatefulWidget {
 class _VideoPlayerDialogState extends State<_VideoPlayerDialog> {
   late final VideoPlayerController _controller;
   bool _ready = false;
+  bool _userPaused = false;
   String? _error;
 
   @override
@@ -293,15 +294,23 @@ class _VideoPlayerDialogState extends State<_VideoPlayerDialog> {
     return '$m:$s';
   }
 
+  static bool _hasKnownDuration(VideoPlayerValue value) =>
+      value.duration.inMilliseconds > 1;
+
   void _togglePlay() {
     if (!_ready) return;
     final value = _controller.value;
     if (value.isPlaying) {
+      _userPaused = true;
       _controller.pause();
     } else {
-      if (value.position >= value.duration && value.duration > Duration.zero) {
+      final reachedEnd = _hasKnownDuration(value)
+          ? value.isCompleted || value.position >= value.duration
+          : !_userPaused;
+      if (reachedEnd) {
         _controller.seekTo(Duration.zero);
       }
+      _userPaused = false;
       _controller.play();
     }
   }
@@ -403,19 +412,28 @@ class _VideoPlayerDialogState extends State<_VideoPlayerDialog> {
                       ),
                     ),
                     Expanded(
-                      child: VideoProgressIndicator(
-                        _controller,
-                        allowScrubbing: true,
-                        colors: const VideoProgressColors(
-                          playedColor: AppColors.accent,
-                          bufferedColor: AppColors.borderColor,
-                          backgroundColor: Color(0xFFE5E5EA),
-                        ),
-                      ),
+                      child: _hasKnownDuration(value)
+                          ? VideoProgressIndicator(
+                              _controller,
+                              allowScrubbing: true,
+                              colors: const VideoProgressColors(
+                                playedColor: AppColors.accent,
+                                bufferedColor: AppColors.borderColor,
+                                backgroundColor: Color(0xFFE5E5EA),
+                              ),
+                            )
+                          : LinearProgressIndicator(
+                              value: value.isPlaying ? null : 0,
+                              minHeight: 4,
+                              color: AppColors.accent,
+                              backgroundColor: const Color(0xFFE5E5EA),
+                            ),
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      '${_formatDuration(value.position)} / ${_formatDuration(value.duration)}',
+                      _hasKnownDuration(value)
+                          ? '${_formatDuration(value.position)} / ${_formatDuration(value.duration)}'
+                          : '',
                       style: AppTypography.textStyle(
                         fontSize: 12,
                         color: AppColors.textSecondary,

@@ -290,6 +290,37 @@ void main() {
       expect(find.text('Add video'), findsOneWidget);
     });
 
+    testWidgets('large video shows inline note instead of a snackbar', (
+      tester,
+    ) async {
+      final clip = File('${tempDir.path}/big.mp4')
+        ..writeAsBytesSync(List<int>.filled(1024, 3));
+      const note = 'Large video · uploads in the background after you submit';
+
+      Widget field(int size) => wrap(
+        FileFieldWidget(
+          key: ValueKey(size),
+          label: 'Behavior Clip',
+          accepts: 'video',
+          initialValue: {
+            'file_path': clip.path,
+            'file_name': 'big.mp4',
+            'original_name': 'big.mp4',
+            'file_size': size,
+            'content_type': 'video/mp4',
+          },
+          onChanged: (_) {},
+        ),
+      );
+
+      await tester.pumpWidget(field(30 * 1024 * 1024));
+      expect(find.text(note), findsOneWidget);
+      expect(find.byType(SnackBar), findsNothing);
+
+      await tester.pumpWidget(field(10 * 1024 * 1024));
+      expect(find.text(note), findsNothing);
+    });
+
     testWidgets('video preview displays extracted thumbnail frame and duration', (
       tester,
     ) async {
