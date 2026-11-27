@@ -1574,6 +1574,47 @@ void main() {
   );
 
   test(
+    'tus create 5xx without Tus-Resumable header retries tus instead of falling back to legacy',
+    () async {
+      final file = File('${tempDir.path}/proxy.jpg')
+        ..writeAsBytesSync(List<int>.filled(1024, 6));
+      final store = _InMemoryUploadStore();
+
+      final gateway = _FakeGateway(
+        tusEndpoint: 'https://fieldlog.test/tus/',
+        onInit: (_, _) async => throw StateError('legacy init should not be called'),
+        onPartUrls: (_, _) async => const [],
+        onConfirm: (_, _) async {},
+        onPut: (req) async {
+          await req.finalize().drain<void>();
+          if (req.method == 'POST') {
+            return http.StreamedResponse(const Stream.empty(), 502);
+          }
+          throw StateError('Unexpected ${req.method}');
+        },
+      );
+
+      final worker = MediaUploadQueueWorker(
+        store: store,
+        gateway: gateway,
+        readConnectivity: () =>
+            const ConnectivityState(isOnline: true, isOnWifi: true),
+        readPolicy: () => MediaUploadNetworkPolicy.anyNetwork,
+        reportUserError: (_) {},
+        reportError: (_, {attachmentId, statusCode}) async {},
+      );
+      addTearDown(worker.dispose);
+
+      await store.insert(_item('att-proxy', file, name: 'proxy.jpg', contentType: 'image/jpeg'));
+      await worker.drainOnce();
+
+      final row = store.rows['att-proxy']!;
+      expect(row.status, MediaUploadStatus.queued);
+      expect(row.retryCount, 1);
+    },
+  );
+
+  test(
     'tus handles 400 pre-finish rejection as failed_permanent and 409 already confirmed as done',
     () async {
       final badFile = File('${tempDir.path}/bad.png')

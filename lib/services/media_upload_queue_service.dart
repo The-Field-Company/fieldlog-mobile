@@ -1219,6 +1219,12 @@ class MediaUploadQueueWorker {
         headers: headers,
       );
 
+      if (result.statusCode >= 500) {
+        throw _TransientNetworkException(
+          'tus create failed (${result.statusCode})',
+        );
+      }
+
       if (!result.headers.containsKey('tus-resumable')) {
         throw _TusUnavailableException();
       }
