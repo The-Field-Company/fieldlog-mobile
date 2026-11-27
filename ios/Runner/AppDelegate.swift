@@ -6,6 +6,10 @@ import UIKit
 @main
 @objc class AppDelegate: FlutterAppDelegate {
   private let locationBridge = FieldLogLocationBridge()
+  private let mediaThumbnailQueue = DispatchQueue(
+    label: "com.fieldlog.media.thumbnails",
+    qos: .userInitiated
+  )
 
   override func application(
     _ application: UIApplication,
@@ -47,6 +51,7 @@ import UIKit
         UIApplication.shared.open(url) { opened in result(opened) }
       }
 
+      let thumbnailQueue = self.mediaThumbnailQueue
       let mediaChannel = FlutterMethodChannel(
         name: "com.fieldlog/media",
         binaryMessenger: controller.binaryMessenger
@@ -67,7 +72,7 @@ import UIKit
         let requestedMax = (arguments["maxWidth"] as? Int) ?? 640
         let maxEdge = CGFloat(min(max(requestedMax, 64), 1280))
 
-        DispatchQueue.global(qos: .userInitiated).async {
+        thumbnailQueue.async {
           let payload = Self.extractVideoThumbnail(path: path, maxEdge: maxEdge)
           DispatchQueue.main.async {
             result(payload)

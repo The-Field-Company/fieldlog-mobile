@@ -240,7 +240,20 @@ class _FileFieldWidgetState extends State<FileFieldWidget>
 
       final dir = await getApplicationDocumentsDirectory();
       final id = const Uuid().v4();
-      final saved = await sourceFile.copy('${dir.path}/$id.$ext');
+      final targetPath = '${dir.path}/$id.$ext';
+      final tempDir = await getTemporaryDirectory();
+      final isPickedTempCopy = sourceFile.path.startsWith(tempDir.path);
+      File saved;
+      if (isPickedTempCopy) {
+        try {
+          saved = await sourceFile.rename(targetPath);
+        } on FileSystemException {
+          saved = await sourceFile.copy(targetPath);
+          await _deleteLocalFile(sourceFile);
+        }
+      } else {
+        saved = await sourceFile.copy(targetPath);
+      }
       copied = saved;
       final mb = bytes / (1024 * 1024);
       if (mb > 25) {

@@ -66,10 +66,12 @@ class VideoThumbnailService {
       data = null;
     }
 
-    if (_cache.length >= _maxCacheEntries) {
-      _cache.remove(_cache.keys.first);
+    if (data != null) {
+      if (_cache.length >= _maxCacheEntries) {
+        _cache.remove(_cache.keys.first);
+      }
+      _cache[filePath] = data;
     }
-    _cache[filePath] = data;
     return data;
   }
 }

@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:fieldlog_mobile/app_typography.dart';
 import 'package:video_player/video_player.dart';
+import '../../services/audio_service.dart';
 import '../../services/video_thumbnail_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/attachment_accepts.dart';
@@ -59,6 +60,7 @@ class _VideoPreviewCardState extends State<VideoPreviewCard> {
   }
 
   void _openPlayer(BuildContext context) {
+    AudioService.stopPlayback();
     showDialog<void>(
       context: context,
       builder: (_) => _VideoPlayerDialog(
@@ -177,22 +179,26 @@ class _VideoPreviewCardState extends State<VideoPreviewCard> {
                 ),
               ),
             Positioned(
-              top: 6,
-              right: 6,
+              top: 0,
+              right: 0,
               child: Tooltip(
                 message: 'Remove video',
                 child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
                   onTap: widget.onRemove,
-                  child: Container(
-                    padding: const EdgeInsets.all(5),
-                    decoration: const BoxDecoration(
-                      color: Colors.black54,
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.close_rounded,
-                      size: 18,
-                      color: Colors.white,
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Container(
+                      padding: const EdgeInsets.all(5),
+                      decoration: const BoxDecoration(
+                        color: Colors.black54,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.close_rounded,
+                        size: 18,
+                        color: Colors.white,
+                      ),
                     ),
                   ),
                 ),

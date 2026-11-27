@@ -353,7 +353,7 @@ class _MediaSyncSheet extends StatelessWidget {
         : '';
     if (summary.isUploading && summary.activeFileName != null) {
       final pct = summary.activeProgress != null
-          ? ' · ${(summary.activeProgress! * 100).round()}%'
+          ? ' · ${(summary.activeProgress! * 100).round().clamp(0, 99)}%'
           : '';
       final left = summary.pendingTotal > 1
           ? ' · ${summary.pendingTotal - 1} more'

@@ -541,6 +541,7 @@ class MediaUploadQueueWorker {
   final StreamController<PendingMediaSummary> _summaryController =
       StreamController<PendingMediaSummary>.broadcast();
   PendingMediaSummary _summary = const PendingMediaSummary();
+  int _summarySeq = 0;
 
   bool _stopped = false;
   bool _draining = false;
@@ -782,13 +783,16 @@ class MediaUploadQueueWorker {
     int? activeTotalBytes,
   }) async {
     if (_stopped) return;
+    final seq = ++_summarySeq;
     try {
-      _summary = await store.readSummary(
+      final nextSummary = await store.readSummary(
         activeFileName: activeFileName,
         activeProgress: activeProgress,
         activeBytesSent: activeBytesSent,
         activeTotalBytes: activeTotalBytes,
       );
+      if (_stopped || seq != _summarySeq) return;
+      _summary = nextSummary;
       if (!_summaryController.isClosed) {
         _summaryController.add(_summary);
       }
@@ -1492,6 +1496,14 @@ class MediaUploadQueueWorker {
           tusUploadUrl: tusUrl,
           uploadedOffset: offset,
         );
+        if (fileSize > 0) {
+          await _emitSummary(
+            activeFileName: item.originalName,
+            activeProgress: min(1.0, offset / fileSize),
+            activeBytesSent: offset.clamp(0, fileSize),
+            activeTotalBytes: fileSize,
+          );
+        }
         continue;
       }
 

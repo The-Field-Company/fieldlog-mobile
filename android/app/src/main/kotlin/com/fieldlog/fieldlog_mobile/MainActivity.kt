@@ -20,6 +20,7 @@ import io.flutter.plugin.common.MethodChannel
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -92,65 +93,75 @@ class MainActivity : FlutterActivity() {
         maxWidth: Int,
         result: MethodChannel.Result,
     ) {
-        mediaExecutor.execute {
-            val payload = try {
-                val file = File(path)
-                if (!file.exists() || !file.isFile) {
-                    null
-                } else {
-                    val retriever = MediaMetadataRetriever()
-                    try {
-                        retriever.setDataSource(path)
-                        val durationMs = retriever
-                            .extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
-                            ?.toLongOrNull()
-                            ?.takeIf { it > 0L }
+        if (mediaExecutor.isShutdown || isDestroyed || isFinishing) {
+            result.success(null)
+            return
+        }
+        try {
+            mediaExecutor.execute {
+                val payload = try {
+                    val file = File(path)
+                    if (!file.exists() || !file.isFile) {
+                        null
+                    } else {
+                        val retriever = MediaMetadataRetriever()
+                        try {
+                            retriever.setDataSource(path)
+                            val durationMs = retriever
+                                .extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                                ?.toLongOrNull()
+                                ?.takeIf { it > 0L }
 
-                        val rawBitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-                            retriever.getScaledFrameAtTime(
-                                0L,
-                                MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
-                                maxWidth,
-                                maxWidth,
-                            ) ?: retriever.getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                        } else {
-                            retriever.getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                        }
+                            val rawBitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                                retriever.getScaledFrameAtTime(
+                                    0L,
+                                    MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
+                                    maxWidth,
+                                    maxWidth,
+                                ) ?: retriever.getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                            } else {
+                                retriever.getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                            }
 
-                        val bytes = rawBitmap?.let { bitmap ->
-                            val scaled = scaleDownIfNeeded(bitmap, maxWidth)
+                            val bytes = rawBitmap?.let { bitmap ->
+                                val scaled = scaleDownIfNeeded(bitmap, maxWidth)
+                                try {
+                                    val out = ByteArrayOutputStream()
+                                    scaled.compress(Bitmap.CompressFormat.JPEG, 80, out)
+                                    out.toByteArray()
+                                } finally {
+                                    if (scaled !== bitmap) scaled.recycle()
+                                    bitmap.recycle()
+                                }
+                            }
+
+                            if (bytes == null && durationMs == null) {
+                                null
+                            } else {
+                                mapOf(
+                                    "bytes" to bytes,
+                                    "durationMs" to durationMs,
+                                )
+                            }
+                        } finally {
                             try {
-                                val out = ByteArrayOutputStream()
-                                scaled.compress(Bitmap.CompressFormat.JPEG, 80, out)
-                                out.toByteArray()
-                            } finally {
-                                if (scaled !== bitmap) scaled.recycle()
-                                bitmap.recycle()
+                                retriever.release()
+                            } catch (_: Exception) {
                             }
                         }
+                    }
+                } catch (_: Throwable) {
+                    null
+                }
 
-                        if (bytes == null && durationMs == null) {
-                            null
-                        } else {
-                            mapOf(
-                                "bytes" to bytes,
-                                "durationMs" to durationMs,
-                            )
-                        }
-                    } finally {
-                        try {
-                            retriever.release()
-                        } catch (_: Exception) {
-                        }
+                mainHandler.post {
+                    if (!isDestroyed && !isFinishing) {
+                        result.success(payload)
                     }
                 }
-            } catch (_: Exception) {
-                null
             }
-
-            mainHandler.post {
-                result.success(payload)
-            }
+        } catch (_: RejectedExecutionException) {
+            result.success(null)
         }
     }
 
